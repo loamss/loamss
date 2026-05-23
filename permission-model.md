@@ -61,19 +61,19 @@ Each capability:
 | `email` | `email.draft` | internal | no | (none — writes to local draft store) |
 | `calendar` | `calendar.read` | inbound | no | `tag`, `time_range` |
 | `calendar` | `calendar.write` | outbound | **yes** | `tag`, `time_range` |
-| `files` | `files.read` | inbound | no | `paths` (glob list), `time_range` |
+| `files` | `files.read` | inbound | no | `paths` (glob list), `time_range`, `data_classes_included`, `data_classes_excluded` |
 | `files` | `files.write` | outbound | optional | `paths` (glob list) |
 | `messages` | `messages.read` | inbound | no | `channel`, `time_range` |
 | `messages` | `messages.send` | outbound | **yes** | `channel`, `recipient` |
-| `memory` | `memory.read` | inbound | no | `entities` (type list), `data_classes_excluded` |
-| `memory` | `memory.query` | inbound | no | `entities`, `data_classes_excluded`, `time_range` |
+| `memory` | `memory.read` | inbound | no | `entities` (type list), `data_classes_included`, `data_classes_excluded` |
+| `memory` | `memory.query` | inbound | no | `entities`, `data_classes_included`, `data_classes_excluded`, `time_range` |
 | `memory` | `memory.write` | internal | no | `entities`, `provenance_required` |
 | `memory` | `memory.forget` | internal | **yes** | `entity_id` |
 | `model` | `model.call` | internal | no | `tasks` (allow list), `cost_ceiling`, `forbidden_data_classes` |
 | `content` | `content.list` | inbound | no | `tag`, `type` |
 | `content` | `content.read` | inbound | no | `tag`, `type`, `resource_id` |
 | `content` | `content.publish` | outbound | optional | `tag` (effective public exposure surface) |
-| `events` | `<type>.write` | inbound | no | `subject_pattern`, `source` (auto-set from credential) |
+| `events` | `<type>.write` | inbound | no | `subject_pattern`, `source` (auto-set from credential) — capability name follows the event type (e.g., `content.metrics.write`, `vehicle.telemetry.write`); declared by the exposer capsule that defines the event type |
 | `audit` | `audit.read` | inbound | no | `time_range`, `event_types` |
 | `external` | `external.http` | outbound | optional | `hosts` (allow list), `methods` |
 
@@ -192,11 +192,15 @@ Some data carries cross-cutting sensitivity that overrides ordinary scope checks
 - `intimate` — relationships, personal correspondence not intended for any third-party
 - (user-extensible)
 
-Data classes interact with permissions in two ways:
+Data classes interact with permissions in three ways:
 
 1. **`forbidden_data_classes` in `model.call` scope**: routing rule that prevents content tagged in those classes from being sent to a model. A health-data capsule can declare `forbidden_data_classes: ["health"]` on its model calls to ensure no hosted model ever sees the data.
 
-2. **`data_classes_excluded` in `memory.query` / `memory.read` scope**: a grant can globally exclude classes from view. ChatGPT may be granted `memory.query` with `data_classes_excluded: ["health"]` — even health-tagged memory entries are invisible, not just redacted.
+2. **`data_classes_excluded` in `memory.read` / `memory.query` / `files.read` scope**: a grant can globally exclude classes from view. ChatGPT may be granted `memory.query` with `data_classes_excluded: ["health"]` — even health-tagged memory entries are invisible, not just redacted.
+
+3. **`data_classes_included` in `memory.read` / `memory.query` / `files.read` scope**: the inverse — the principal sees **only** data tagged in those classes, and nothing else. A clinic AI may be granted `memory.query` with `data_classes_included: ["health"]` — every memory entry that lacks the `health` tag is invisible to the clinic, even if entities and time range would otherwise match. This is how specialist contexts are scoped: the clinic does not need (and must not see) anything outside their domain.
+
+When both `data_classes_included` and `data_classes_excluded` are specified on the same scope, `data_classes_included` is applied first (positive filter), then `data_classes_excluded` is applied to the remainder (negative filter on top). An entry must match the include set AND not match the exclude set.
 
 Data classes are **declared on data**, not on capabilities. The same `files.read` capability can be granted with or without `data_classes_excluded` — the protection is scope-level, not capability-level.
 

@@ -11,7 +11,7 @@ A user runs Loamss on their laptop. They want ChatGPT to know who they are witho
 1. User installs the `loamss` binary, runs `loamss init`. Picks storage (local encrypted folder), memory (SQLite + sqlite-vec). Adds a Claude API key for the organizer capsules (optional — can be deferred).
 2. User connects Gmail and Calendar via OAuth. Ingestor capsules pull data into storage. Organizer capsules build memory: people, threads, projects.
 3. User goes to ChatGPT, adds Loamss as an MCP server using a pairing code from `loamss client pair`.
-4. Loamss console shows a permission slip: ChatGPT requests `email.search`, `calendar.read`, `memory.query`. User narrows `memory.query` to "people, projects, but not health." Approves.
+4. Loamss console shows a permission slip: ChatGPT requests `email.read`, `calendar.read`, `memory.query`. User narrows `memory.query` to `entities: ["people", "projects"], data_classes_excluded: ["health"]`. Approves.
 5. In ChatGPT, the user says *"draft a reply to Sarah about the contract."* ChatGPT calls Loamss via MCP for context, drafts locally, returns the draft.
 6. User edits, hits send. ChatGPT calls Loamss's `email.send` tool. Loamss pauses for approval (consequential action), user confirms, send happens via Loamss's Gmail OAuth, audit log records the full chain.
 
@@ -23,7 +23,7 @@ A patient visits a clinic. The clinic's intake AI has an MCP client.
 
 1. Tablet at the clinic displays a QR code from their MCP client.
 2. Patient scans with the Loamss companion app on their phone.
-3. Loamss shows a permission slip: clinic requests `health.read` (last 12 months), `memory.query` (health entities only), duration: 2 hours, auto-revoke: yes.
+3. Loamss shows a permission slip: clinic requests `memory.query` with `data_classes_included: ["health"], time_range: { since: "12 months ago" }` and `files.read` with `data_classes_included: ["health"]`. Duration: 2 hours. Auto-revoke: yes.
 4. Patient approves.
 5. For two hours, the clinic AI can query Loamss for symptoms, medications, recent labs. Each query is logged.
 6. At 2 hours, the grant expires. The clinic loses access. The audit log retains the full record forever.
@@ -34,7 +34,7 @@ A patient visits a clinic. The clinic's intake AI has an MCP client.
 
 A user wants to do their taxes.
 
-1. User installs `tax-organizer` capsule. Permission slip: `email.search` (financial senders), `files.read` (`finance/*`), `files.write` (`finance/tax-2026/`), `memory.write` (tax entities).
+1. User installs `tax-organizer` capsule. Permission slip: `email.read` (scope: `sender: financial-domains-list`), `files.read` (scope: `paths: finance/*`), `files.write` (scope: `paths: finance/tax-2026/*`), `memory.write` (scope: `entities: ["tax-entity"]`, declared by this capsule).
 2. User approves. Runs the capsule.
 3. The capsule crawls a year of email and files, identifies receipts, contractors, deductions, writes a structured folder. Calls Loamss's model router internally to classify ambiguous items.
 4. The capsule never opens a chat window. The user reads the output by opening the resulting folder.
@@ -46,10 +46,10 @@ A user wants to do their taxes.
 A user uses Cursor for code and ChatGPT for everything else.
 
 1. Both have MCP clients. Both are paired with the same Loamss.
-2. Cursor has grants: `code.context`, `notes.read` (engineering folder only), `calendar.read` (today only).
+2. Cursor has grants: `files.read` (scope: `paths: notes/engineering/*, code/**`), `memory.query` (scope: `entities: ["project", "decision", "topic"]`), `calendar.read` (scope: `time_range: { today }`).
 3. ChatGPT has grants: full set as in Scenario 1.
 4. In Cursor, the user asks *"what did I decide about the auth refactor last week?"* The decision was made in a Slack thread, not in code. Cursor queries Loamss's memory, gets the decision back, and shows it.
-5. The Slack thread was ingested by the Slack connector. The decision was extracted by an organizer capsule. Cursor never had to see Slack directly.
+5. The Slack thread was ingested by the Slack connector (Phase 2 — this scenario is not end-to-end testable until Slack lands). The decision was extracted by an organizer capsule. Cursor never had to see Slack directly.
 
 **What this stresses**: memory as the cross-surface unifier. Two different AI tools, two different scopes, one shared brain. The unifier is the whole point of Loamss.
 
@@ -118,8 +118,14 @@ If a future scenario can't be expressed through these five primitives, that's a 
 
 ## Open questions surfaced by the scenarios
 
-- **Public-publish vs. private-read UX** (from S5): same capability, different framing. Permission model spec should name this.
-- **Event/metric write-back schema** (from S5, S6): need a capability namespace and event shape. Probably borrows from CloudEvents or ActivityPub patterns.
-- **Resource binary streaming** (from S5): MCP surface needs explicit signed-URL / byte-range support.
-- **Trust in platform-reported metrics** (from S5, S6): Vibez claims 10k plays — do we store as fact, as claim, with provenance? Initial leaning: as claim, attributed to the writing client, queryable but never silently merged.
-- **Federation as MCP vs. A2A** (from S7): defer; revisit when Phase 3 begins.
+Most of the open questions originally raised here have been resolved across the spec set:
+
+- ✅ **Public-publish vs. private-read UX** (S5): resolved in `permission-model.md` via the `framing` field on grants.
+- ✅ **Event/metric write-back schema** (S5, S6): resolved across `mcp-surface.md` (CloudEvents-shaped envelope), `permission-model.md` (`<type>.write` capability declared by exposer capsules), and `audit-spec.md` (`event.write` audit type).
+- ✅ **Resource binary streaming** (S5): resolved in `mcp-surface.md` via signed-URL redirection backed by the storage adapter's `SignedURL` operation in `adapter-interface.md`.
+- ✅ **Trust in platform-reported metrics** (S5, S6): resolved as **attributed claims** — stored verbatim with source provenance, never silently merged into ground truth.
+
+Remaining open:
+
+- **Federation as MCP vs. A2A** (S7): deferred to Phase 3. The current design treats federation as "another MCP client, where the client is another Loamss" — A2A may be a better fit when Phase 3 work begins.
+- **Capsule-extensible memory entity types** (implicit in S3, S4, S6): scenarios assume capsules can introduce new entity types (`tax-entity`, `decision`, `vehicle.event`). `capsule-spec.md` lists this as an open question for v0.2. Worth resolving positively given how many scenarios depend on it.
