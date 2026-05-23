@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or open-ended discussion
+    url: https://github.com/loamss/loamss/discussions
+    about: For questions, ideas, or topics that don't fit a specific template, please use Discussions.
+  - name: Security vulnerability
+    url: https://github.com/loamss/loamss/security/advisories/new
+    about: For security issues, please use the private security advisory channel — not the public issue tracker.
