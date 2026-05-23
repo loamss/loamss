@@ -48,7 +48,7 @@ A driver interface for backends that hold the user's bytes. Adapters at MVP:
 - S3-compatible object storage
 - Postgres
 
-The user picks one (or a combination) at deploy time. The runtime reads and writes only through this interface. Adapter contracts live in `docs/adapter-interface.md` (planned).
+The user picks one (or a combination) at deploy time. The runtime reads and writes only through this interface. Adapter contracts live in `adapter-interface.md`.
 
 ### 3. The Memory Layer
 
@@ -83,7 +83,7 @@ Every request that crosses this surface passes through the permission framework 
 
 For large binary content (video, audio), the MCP surface issues **signed URLs into the user's storage** rather than proxying bytes. The runtime never becomes a CDN. See `scenarios.md` §5 for the creator publishing flow.
 
-The MCP surface specification will live in `docs/mcp-surface.md` (planned). For now, the canonical behavior is whatever `scenarios.md` requires.
+The MCP surface specification lives in `mcp-surface.md`.
 
 ### 5. The Permission Framework
 
@@ -102,7 +102,7 @@ Both share:
 
 When a permission slip is presented at install time (capsule) or pairing time (client), the user can narrow scope and set expiry. Grants are revocable at any time via console, CLI (`loamss grant revoke`), or auto-expiry.
 
-Permission model details: `docs/permission-model.md` (planned).
+Permission model details: `permission-model.md`.
 
 ### 6. The Audit Log
 

@@ -2,43 +2,156 @@
 
 Loamss is open-source **personal data infrastructure**.
 
-It is the place your data and memory live — under your control, in storage you own — and the governed interface that lets the AI tools you use plug in to see who you are. **MCP is the primary interface**: any MCP-speaking client (Claude, ChatGPT, Cursor, an agent, your own scripts) connects to your Loamss and gets scoped, permissioned, audited access to the slices of your life you've chosen to expose.
+It is the place your data and memory live — under your control, in storage you own — and the governed interface that anything wanting access has to come through. AI tools, platforms you publish to, specialists you visit, peers you share with, services that report back, your own scripts: every grant you issue is explicit, every scope is yours to set, every access is logged, every grant is revocable.
+
+**You own your data. You decide who sees it. You see what happened. You take it with you when you leave.**
 
 ## The idea
 
-Every AI tool you use today keeps its own siloed copy of you. ChatGPT remembers what ChatGPT has seen. Gemini knows what Google knows. Copilot knows what's in your editor. None of them actually know *you* — they each see a slice of your life and that slice belongs to them.
+Your data is spread across services. Every platform you use — email, photos, calendar, messages, notes, files, recordings, health records, financial accounts, location history, the lot — owns its slice of you. You can extract bits when you remember to, but each platform decides what it shares and what it keeps. If a service disappears, your history goes with it. If you want to switch, you start over.
 
-Loamss inverts that. Your data lives where you put it. Your memory — the durable, entity-resolved understanding of your work, your people, your projects — accumulates over years in storage you own. Then any AI tool plugs into the same brain via MCP and instantly knows who you are. Switch tools, switch models, switch decades — the brain persists.
+Loamss inverts that. Your data lives where you put it. Anything that wants to read it or act on it asks through Loamss's permission framework: who you are, what you've explicitly granted, in what scope, for how long. AI tools are one class of consumer that needs this kind of governed access; so are publishing platforms, clinics, schools, banks, household members, analytics services, and the long tail of integrations that accumulate in a digital life. The framework treats them all the same.
 
-**The tools are interchangeable. The brain is permanent. The brain is yours.**
+## What you control
+
+**What goes in.** You connect data sources (Gmail, Calendar, files, messages, photos, health apps, financial records — anything you choose) and Loamss ingests them into your storage. Nothing gets pulled that you didn't connect.
+
+**Who gets access.** Every external consumer — every AI tool, every platform, every specialist, every peer — must be explicitly paired with your Loamss and granted scoped capabilities. No background access. No "trusted" partners. No implicit grants.
+
+**What scope.** Each grant is narrowed: read this folder, search emails from this sender, query memory excluding health, publish content tagged public. You set the lines. You can narrow further or revoke entirely at any time.
+
+**For how long.** Grants can be time-bound (the clinic visit gets 2 hours, then access vanishes automatically) or open-ended (your daily AI tools stay paired until you revoke).
+
+**With what consequences.** Consequential actions — sending email, posting content, transferring money, deleting data — require explicit per-action approval through the console or your phone. Reading is one thing; acting on your behalf is another.
+
+**What's recorded.** Every access — successful or denied — is logged. The audit trail is a first-class user-facing surface, not a debug artifact. You can query "what did each service see last week," "what actions did capsule X take," "show me every denial in the past month."
+
+**How to leave.** `loamss export` produces a full dump of your storage, memory, and audit history. Point a different runtime at the same data and walk away. The walkaway path is a tested invariant, not a marketing claim.
+
+## How it fits together
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  EXTERNAL CONSUMERS (anything that speaks MCP)              │
+│  AI tools · Platforms · Specialists · Peers · Services · …  │
+│  Paired explicitly. Scoped narrowly. Logged completely.     │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ MCP (paired, scoped, audited)
+┌──────────────────────────▼──────────────────────────────────┐
+│  LOAMSS RUNTIME — single binary, OS-level daemon            │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ MCP surface · Permissions · Audit log · Pairing        │ │
+│  ├────────────────────────────────────────────────────────┤ │
+│  │ Memory layer (entities, vectors, graph, episodic)      │ │
+│  ├────────────────────────────────────────────────────────┤ │
+│  │ Storage adapter │ Memory adapter │ Capsule host        │ │
+│  └──────┬──────────────────────────────┬───────────────────┘ │
+│         │                              │ sandboxed via MCP  │
+│         │                  ┌───────────▼─────────────────┐   │
+│         │                  │  CAPSULES                   │   │
+│         │                  │  ingest │ organize │        │   │
+│         │                  │  expose │ act              │   │
+│         │                  └─────────────────────────────┘   │
+└─────────┼────────────────────────────────────────────────────┘
+          │
+┌─────────▼───────────────────────────────────────────────────┐
+│  USER-OWNED RESOURCES                                       │
+│  Storage (FS / SQLite / S3 / Postgres) │ Identity (OAuth)   │
+│  Compute (laptop / NAS / server)       │ Model keys (opt.)  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The middle layer — Loamss — is what this project builds. The top and bottom layers belong to you.
+
+## What it looks like in practice
+
+**You decide who sees what, and you see what they did.** You pair your AI assistants with your Loamss. ChatGPT gets memory access scoped to "people, projects, not health." Cursor gets read access to engineering notes plus today's calendar. Each one knows enough to be useful, neither knows more than you allowed, and the audit log shows you every query they ran last week.
+
+**You publish content without surrendering it.** You make videos. A social platform supports MCP and onboards you as a creator. You pair the platform with your Loamss and grant scoped read access to videos tagged `public`. The platform streams directly from your S3 bucket via signed URLs Loamss issues. Every play is logged. The platform writes back metrics and revenue events. If the platform disappears tomorrow, your library and analytics are still in your storage. You point a new platform at the same Loamss and continue.
+
+**You bring a specialist in temporarily.** A clinic appointment. The clinic's intake AI has an MCP client. You scan a QR from their tablet. Your Loamss shows a permission slip: `health.read` for the last 12 months, scoped to health entities only, expires in 2 hours, auto-revoke. You approve. The clinic AI has what it needs for the visit. At 2 hours, access vanishes. The audit log keeps the full record forever.
+
+**You take everything with you.** You decide Loamss isn't useful anymore, or another implementation is better, or your needs changed. `loamss export` produces a complete archive of your storage, memory, and audit history. Point another runtime at it. Or don't — keep the archive, ditch the rest. Nothing is held hostage.
+
+These aren't speculative. See [`scenarios.md`](scenarios.md) for the seven end-to-end use cases the architecture must support.
 
 ## What Loamss is
 
 - An open-source **runtime** that owns the lifecycle of your personal data and memory
-- An **MCP server surface** that exposes governed views of that data to whatever AI tools you connect
+- A **permission framework** with auditable, capability-based consent — for everything that wants access
+- An **MCP server surface** that gives external consumers a uniform way to ask
 - An open **capsule specification** for packaging the pieces that ingest, organize, expose, and act on your data
 - A **registry** where capsule developers publish and users discover
-- A **permission framework** with auditable capability-based consent — for both capsules acting on data and external clients reading it
 - **Adapter layers** that let users plug in their own storage and memory backends
-- A **console** for managing data sources, capsules, connected clients, permissions, and the audit log
+- A **console** for managing data sources, permissions, paired consumers, and the audit log
 
 ## What Loamss is not
 
-- Not a chat app. The chat surfaces are whatever you already use; Loamss is what they connect to.
+- Not a chat app. The chat surfaces are whatever you already use; Loamss is what they connect to when you let them.
 - Not a model. We don't train one. We don't call one on your behalf except as needed to organize your data.
 - Not a data host. You bring storage. We don't operate the database your data sits in.
-- Not a walled garden. Capsules from anywhere, clients from anywhere, storage anywhere.
+- Not a walled garden. Capsules from anywhere, consumers from anywhere, storage anywhere.
 - Not a SaaS lock-in. If we stop being useful, you point another runtime at your data and walk away.
+- Not "for AI." AI tools are one class of consumer. The framework treats every consumer the same.
+
+## Capsules — the extensibility surface
+
+A **capsule** is a packaged unit that extends what Loamss can do with your data. Capsules are sandboxed (subprocess + MCP, with WASM planned), signed, and permission-gated. Four roles, all defined by what they do:
+
+- **Ingestors** pull data IN from external services (Gmail, Calendar, Drive, Slack, GitHub, health apps, financial services) into your storage
+- **Organizers** read from storage and build memory — entity resolution, summarization, embeddings, classification
+- **Exposers** declare new MCP resources and tools for external consumers to use (e.g., the `content-publisher` capsule that exposes your videos to publishing platforms)
+- **Actuators** take action in the outside world on your behalf (send email, post to a platform, write a calendar event) — always gated by explicit user approval
+
+Capsules are written in any language, packaged to the [capsule specification](capsule-spec.md), and installed via `loamss capsule install <name>` from the registry. They can be third-party. They are themselves scoped by the same permission framework that gates external consumers — capsules are not trusted.
 
 ## Status
 
-Early. Specifications first, reference implementations following. See `ROADMAP.md`.
+**Phase 0 — specifications complete; reference implementation underway.**
 
-## Where to look next
+The spec set is content-complete:
 
-- `ARCHITECTURE.md` — the full technical picture
-- `CLAUDE.md` — context for Claude Code agents working on this repo
-- `ROADMAP.md` — what we're building in what order
-- `capsule-spec.md` — the capsule format
-- `cli.md` — the `loamss` CLI surface
-- `scenarios.md` — end-to-end use cases the design must support
+- ✅ [Architecture](ARCHITECTURE.md) — components, flows, trust model
+- ✅ [Permission model](permission-model.md) — the capability framework
+- ✅ [MCP surface](mcp-surface.md) — how external consumers talk to Loamss
+- ✅ [Capsule spec](capsule-spec.md) — the package format
+- ✅ [Adapter interface](adapter-interface.md) — storage / memory / model contracts
+- ✅ [CLI surface](cli.md) — the `loamss` command shape
+- ✅ [Scenarios](scenarios.md) — end-to-end use cases the design must support
+- ⏳ Audit log schema (next)
+- ⏳ Runtime skeleton (Go) — coming after the spec freeze
+
+See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
+
+## Reading order, depending on who you are
+
+**Curious**: this README, then [`scenarios.md`](scenarios.md), then [`ROADMAP.md`](ROADMAP.md) for timelines.
+
+**Capsule developer**: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md).
+
+**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md).
+
+**Adapter author** (you want your storage backend, vector DB, or model provider to plug in): [`adapter-interface.md`](adapter-interface.md).
+
+**Contributor / runtime engineer**: all of the above plus [`CLAUDE.md`](CLAUDE.md) for project conventions.
+
+## Specs and design docs
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the full technical picture
+- [`ROADMAP.md`](ROADMAP.md) — what we're building in what order
+- [`scenarios.md`](scenarios.md) — end-to-end use cases the design must support
+- [`permission-model.md`](permission-model.md) — the capability framework
+- [`mcp-surface.md`](mcp-surface.md) — the MCP interface Loamss exposes to external consumers
+- [`capsule-spec.md`](capsule-spec.md) — the capsule format
+- [`adapter-interface.md`](adapter-interface.md) — storage / memory / model adapter contracts
+- [`cli.md`](cli.md) — the `loamss` CLI surface
+- [`CLAUDE.md`](CLAUDE.md) — context for Claude Code agents working on this repo
+
+## License
+
+[Apache-2.0](LICENSE). Open source, with a patent grant. Contributions welcome — `CONTRIBUTING.md` lands with the runtime skeleton.
+
+## Canonical URLs
+
+- Repo: [github.com/loamss/loamss](https://github.com/loamss/loamss)
+- Site: [loamss.com](https://loamss.com) (placeholder)

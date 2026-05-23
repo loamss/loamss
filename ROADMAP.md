@@ -6,9 +6,10 @@ The plan is structured so each phase ships something usable, even if narrow. Eac
 
 Goal: lock down the contracts before we build anything that depends on them.
 
-- [ ] Capsule spec v0.1 published (`docs/capsule-spec.md`)
-- [ ] Permission model v0.1 published (`docs/permission-model.md`)
-- [ ] Adapter interface specs: storage, memory, model (`docs/adapter-interface.md`)
+- [x] Capsule spec v0.1 published (`capsule-spec.md`)
+- [x] MCP surface v0.1 published (`mcp-surface.md`)
+- [x] Permission model v0.1 published (`permission-model.md`)
+- [x] Adapter interface specs: storage, memory, model (`adapter-interface.md`)
 - [ ] Audit log schema v0.1
 - [ ] Runtime skeleton in Go: HTTP API, lifecycle, config loading
 - [ ] Dev environment: `make` targets, containerized test backends, CI

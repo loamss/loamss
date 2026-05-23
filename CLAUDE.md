@@ -4,15 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Loamss — context
 
-Loaded automatically by Claude Code at session start. Keep it concise and current. Detailed information lives in `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `cli.md`, and `scenarios.md` (planned to move under `docs/` once that directory lands).
+Loaded automatically by Claude Code at session start. Keep it concise and current. Detailed information lives in `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `mcp-surface.md`, `permission-model.md`, `adapter-interface.md`, `cli.md`, and `scenarios.md` (planned to move under `docs/` once that directory lands).
 
-**Current state**: pre-Phase-0. The repo is specs only — `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `cli.md`, `scenarios.md`, this file. None of the directories shown under "Repo layout" exist yet; treat that section as the planned shape, not the current shape. References in `ARCHITECTURE.md`/`ROADMAP.md` to `docs/permission-model.md`, `docs/adapter-interface.md`, etc. are forward-looking — until those files exist, `ARCHITECTURE.md` is the source of truth for those topics. **`scenarios.md` is the design's correctness check** — every architecture change should preserve every scenario or explicitly acknowledge breaking one.
+**Current state**: Phase 0 spec set is complete. The repo is specs only — `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `mcp-surface.md`, `permission-model.md`, `adapter-interface.md`, `cli.md`, `scenarios.md`, this file. None of the directories shown under "Repo layout" exist yet; treat that section as the planned shape, not the current shape. **`scenarios.md` is the design's correctness check** — every architecture change should preserve every scenario or explicitly acknowledge breaking one.
 
 ## Canonical URLs
 
 - Domain: `loamss.com` (registered, no site yet)
-- GitHub org: `github.com/loamss` (to be created by the user via web UI — GitHub does not allow personal org creation via API)
-- Canonical repo (planned): `github.com/loamss/loamss`
+- GitHub org: `github.com/loamss`
+- Canonical repo: `github.com/loamss/loamss`
+- npm org scope: `@loamss` — **reserved, not published to.** The SDK ships in Phase 2; the org reservation is purely defensive (prevents squatting).
 - License: Apache-2.0 (see `LICENSE` at repo root)
 
 ## What Loamss is, in one paragraph
