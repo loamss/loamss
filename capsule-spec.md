@@ -122,6 +122,56 @@ A capsule declares what kind of model it needs, not which one. The model router 
 
 `forbidden_data_classes` is the safety valve: a health-data capsule can declare that its outputs must never be sent to a hosted model, forcing the router to use a local one.
 
+## Memory extensions
+
+Capsules can extend the memory schema with new entity types. This is how a `tax-organizer` capsule introduces "receipt" and "deduction" entities, how a `vehicle-telemetry` capsule introduces "trip" and "fuel-stop" entities, and how every capsule that needs durable structured records gets one without runtime changes.
+
+A capsule declares its memory extensions in the manifest:
+
+```yaml
+memory_extensions:
+  entity_types:
+    - name: receipt
+      namespace: com.acme.tax        # reverse-DNS prefix; required for extensions
+      description: "A receipt extracted from email or files for tax purposes."
+      schema:
+        type: object
+        required: [vendor, amount, date]
+        properties:
+          vendor: { type: string }
+          amount: { type: number, minimum: 0 }
+          currency: { type: string, pattern: "^[A-Z]{3}$" }
+          date: { type: string, format: date }
+          category: { type: string, enum: [office, travel, meals, equipment, other] }
+          source_uri: { type: string, format: uri }
+      provenance_required: true
+      data_classes: [financial]
+      embedding:
+        source_fields: [vendor, category]
+        model_task: "embedding"
+```
+
+The runtime registers these types when the capsule is installed and:
+
+- Validates every `memory.write` call against the declared JSON schema
+- Records the provenance (which capsule wrote which entity, at what time, from what source)
+- Applies the declared `data_classes` automatically — entries of this type inherit the class, so they are visible only to grants that include or don't exclude `financial`
+- Generates embeddings from `source_fields` using the model router (only if the capsule has `model.call` capability)
+
+### Namespacing and conflict resolution
+
+- Extension entity types **must use a reverse-DNS namespace prefix** (`com.acme.tax`, `org.example.home`). Bare names (`receipt`, `device`) are reserved for **canonical** entity types — those promoted via community review and shipped with the runtime.
+- The runtime treats `com.acme.tax/receipt` and `com.bcorp.tax/receipt` as **distinct types**, even if the schemas are identical. A user with both capsules installed sees two separate entity collections.
+- Capsules can declare they **read** other capsules' types via `memory.query` scope (`entities: ["com.acme.tax/receipt"]`), but only the declaring capsule can **write** to its own types — the runtime rejects cross-capsule writes.
+
+### Canonical promotion
+
+When a community consensus emerges around a particular extension type (say, multiple tax capsules independently converge on similar receipt schemas), the type can be promoted to a canonical name (`receipt`) through registry-level review. The promotion process is community-governed; it doesn't require runtime changes.
+
+### Implications for `memory.query`
+
+A query that doesn't specify `entities` matches all entity types the principal is scoped to read. A query that specifies a list like `entities: ["person", "project", "com.acme.tax/receipt"]` restricts to those types. The same scope grammar works whether types are canonical or extension.
+
 ## The runtime contract
 
 The runtime invokes the capsule as a subprocess speaking MCP over stdio (or HTTP for long-running capsules). On startup, the capsule:
@@ -161,7 +211,6 @@ The runtime ships a `loamss capsule validate <path>` command for authors.
 
 ## Open questions for v0.2
 
-- Inter-capsule communication: can one capsule call another's tools? Currently no. May need it for orchestration capsules in Phase 2.
+- Inter-capsule communication: can one capsule call another's tools? Currently no. May need it for orchestration capsules in Phase 2; likely A2A-shaped, not MCP-shaped (see `ARCHITECTURE.md`).
 - Capsule-provided UI surfaces: should capsules be able to contribute panels to the console? Currently no.
 - WASM runtime: cleaner sandboxing than subprocesses. Deferred.
-- Capsule-declared data schemas: should capsules be able to extend the memory schema with their own entity types? Probably yes, with care.

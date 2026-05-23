@@ -117,6 +117,7 @@ The spec set is content-complete:
 - ✅ [Capsule spec](capsule-spec.md) — the package format
 - ✅ [Adapter interface](adapter-interface.md) — storage / memory / model contracts
 - ✅ [Audit log schema](audit-spec.md) — what gets logged, how it's chained, how it's queried
+- ✅ [Extensibility](extensibility.md) — how the system grows without core changes
 - ✅ [CLI surface](cli.md) — the `loamss` command shape
 - ✅ [Scenarios](scenarios.md) — end-to-end use cases the design must support
 - ⏳ Runtime skeleton (Go) — coming after the spec freeze
@@ -145,6 +146,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`capsule-spec.md`](capsule-spec.md) — the capsule format
 - [`adapter-interface.md`](adapter-interface.md) — storage / memory / model adapter contracts
 - [`audit-spec.md`](audit-spec.md) — audit log schema and tamper-evidence chain
+- [`extensibility.md`](extensibility.md) — what's open for extension and what's stable; anti-patterns in code review
 - [`cli.md`](cli.md) — the `loamss` CLI surface
 - [`CLAUDE.md`](CLAUDE.md) — context for Claude Code agents working on this repo
 

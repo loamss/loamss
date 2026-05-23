@@ -128,4 +128,4 @@ Most of the open questions originally raised here have been resolved across the 
 Remaining open:
 
 - **Federation as MCP vs. A2A** (S7): deferred to Phase 3. The current design treats federation as "another MCP client, where the client is another Loamss" — A2A may be a better fit when Phase 3 work begins.
-- **Capsule-extensible memory entity types** (implicit in S3, S4, S6): scenarios assume capsules can introduce new entity types (`tax-entity`, `decision`, `vehicle.event`). `capsule-spec.md` lists this as an open question for v0.2. Worth resolving positively given how many scenarios depend on it.
+- ✅ **Capsule-extensible memory entity types** (S3, S4, S6): resolved in `capsule-spec.md` via the `memory_extensions` manifest section. Capsules declare new entity types with JSON schemas under reverse-DNS namespaces; the runtime validates writes against the schema and inherits data-class tags onto entries automatically.
