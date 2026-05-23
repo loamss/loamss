@@ -1,0 +1,62 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+.secrets
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+
+# Language ecosystems (forward-looking)
+node_modules/
+.pnp.*
+dist/
+build/
+.next/
+.turbo/
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Go
+*.test
+*.out
+coverage.txt
+loamss
+loamss-*
+
+# Runtime local state (when the daemon exists)
+.loamss/
+loamss-data/
+*.sqlite
+*.sqlite3
+*.db
+audit/
+
+# Logs
+*.log
+logs/
+
+# Local Claude Code state, etc.
+.local/
