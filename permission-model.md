@@ -16,7 +16,7 @@ This spec defines:
 - The cross-cutting data-class restrictions
 - How everything ties to the audit log
 
-This spec does **not** define wire-level details of permission checks (those live in `mcp-surface.md` for external clients and `capsule-spec.md` for capsules), the audit log schema itself (planned: `audit-spec.md`), or specific UX for the permission slip (the console's concern).
+This spec does **not** define wire-level details of permission checks (those live in `mcp-surface.md` for external clients and `capsule-spec.md` for capsules), the audit log schema itself (`audit-spec.md`), or specific UX for the permission slip (the console's concern).
 
 ## The framework, in one paragraph
 

@@ -10,7 +10,7 @@ Goal: lock down the contracts before we build anything that depends on them.
 - [x] MCP surface v0.1 published (`mcp-surface.md`)
 - [x] Permission model v0.1 published (`permission-model.md`)
 - [x] Adapter interface specs: storage, memory, model (`adapter-interface.md`)
-- [ ] Audit log schema v0.1
+- [x] Audit log schema v0.1 (`audit-spec.md`)
 - [ ] Runtime skeleton in Go: HTTP API, lifecycle, config loading
 - [ ] Dev environment: `make` targets, containerized test backends, CI
 - [ ] CLAUDE.md files in each top-level directory with subsystem context

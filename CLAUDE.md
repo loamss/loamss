@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Loamss — context
 
-Loaded automatically by Claude Code at session start. Keep it concise and current. Detailed information lives in `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `mcp-surface.md`, `permission-model.md`, `adapter-interface.md`, `cli.md`, and `scenarios.md` (planned to move under `docs/` once that directory lands).
+Loaded automatically by Claude Code at session start. Keep it concise and current. Detailed information lives in `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `mcp-surface.md`, `permission-model.md`, `adapter-interface.md`, `audit-spec.md`, `cli.md`, and `scenarios.md` (planned to move under `docs/` once that directory lands).
 
-**Current state**: Phase 0 spec set is complete. The repo is specs only — `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `mcp-surface.md`, `permission-model.md`, `adapter-interface.md`, `cli.md`, `scenarios.md`, this file. None of the directories shown under "Repo layout" exist yet; treat that section as the planned shape, not the current shape. **`scenarios.md` is the design's correctness check** — every architecture change should preserve every scenario or explicitly acknowledge breaking one.
+**Current state**: Phase 0 spec set is complete. The repo is specs only — `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `capsule-spec.md`, `mcp-surface.md`, `permission-model.md`, `adapter-interface.md`, `audit-spec.md`, `cli.md`, `scenarios.md`, this file. None of the directories shown under "Repo layout" exist yet; treat that section as the planned shape, not the current shape. **`scenarios.md` is the design's correctness check** — every architecture change should preserve every scenario or explicitly acknowledge breaking one.
 
 ## Canonical URLs
 

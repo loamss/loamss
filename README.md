@@ -116,9 +116,9 @@ The spec set is content-complete:
 - ✅ [MCP surface](mcp-surface.md) — how external consumers talk to Loamss
 - ✅ [Capsule spec](capsule-spec.md) — the package format
 - ✅ [Adapter interface](adapter-interface.md) — storage / memory / model contracts
+- ✅ [Audit log schema](audit-spec.md) — what gets logged, how it's chained, how it's queried
 - ✅ [CLI surface](cli.md) — the `loamss` command shape
 - ✅ [Scenarios](scenarios.md) — end-to-end use cases the design must support
-- ⏳ Audit log schema (next)
 - ⏳ Runtime skeleton (Go) — coming after the spec freeze
 
 See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
@@ -144,6 +144,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`mcp-surface.md`](mcp-surface.md) — the MCP interface Loamss exposes to external consumers
 - [`capsule-spec.md`](capsule-spec.md) — the capsule format
 - [`adapter-interface.md`](adapter-interface.md) — storage / memory / model adapter contracts
+- [`audit-spec.md`](audit-spec.md) — audit log schema and tamper-evidence chain
 - [`cli.md`](cli.md) — the `loamss` CLI surface
 - [`CLAUDE.md`](CLAUDE.md) — context for Claude Code agents working on this repo
 
