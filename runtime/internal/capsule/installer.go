@@ -284,9 +284,16 @@ func (i *Installer) copyCode(sourcePath string, m *Manifest) (string, error) {
 		return installPath, nil
 	}
 
-	// Directory path: copy capsule.yaml + code/ + assets/. Other
-	// files are ignored.
-	for _, sub := range []string{"capsule.yaml", "code", "assets"} {
+	// Directory path: copy capsule.yaml plus the canonical content
+	// subtrees:
+	//   code/   — Go/Python convention (compiled artifacts or scripts)
+	//   src/    — JS/TS source convention (when no build step ships)
+	//   dist/   — JS/TS built-bundle convention (bun build / esbuild output)
+	//   assets/ — static files (templates, fixtures, schemas)
+	// Anything else (node_modules, .git, README.md, package.json, …)
+	// is skipped — capsules should ship as either source or a built
+	// bundle, not as an unbuilt npm package that needs install steps.
+	for _, sub := range []string{"capsule.yaml", "code", "src", "dist", "assets"} {
 		src := filepath.Join(sourcePath, sub)
 		if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
 			continue

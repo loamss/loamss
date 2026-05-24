@@ -131,6 +131,14 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// embedding model" message rather than a cryptic failure.
 	embeddingAdapter := pickEmbeddingAdapter(ctx, modelAdapters, logger)
 
+	// generatorAdapter is the adapter model.call uses for synchronous
+	// text generation. Same selection pattern as embeddingAdapter —
+	// pick the first model adapter advertising the "generation"
+	// capability. Falls back to model:none, which the tool surfaces
+	// as a graceful "no model configured" error rather than a hard
+	// RPC failure.
+	generatorAdapter := pickGenerativeAdapter(ctx, modelAdapters, logger)
+
 	// Tool registry — runtime tools register at startup. Capsule-
 	// provided tools will join the registry at install time
 	// (Phase 1b).
@@ -146,6 +154,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		mcp.NewThreadsListTool(memLayer),
 		mcp.NewThreadsShowTool(memLayer),
 		mcp.NewThreadsEntriesTool(memLayer),
+		mcp.NewModelCallTool(generatorAdapter),
 	} {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)
@@ -296,6 +305,45 @@ func pickEmbeddingAdapter(ctx context.Context, adapters []model.Adapter, logger 
 	if err != nil {
 		// model:none is registered in init() — this can only fail
 		// if the registry got corrupted, which is unrecoverable.
+		logger.Error("model:none unavailable", "err", err)
+		return nil
+	}
+	if err := none.Init(ctx, nil); err != nil {
+		logger.Error("model:none init failed", "err", err)
+		return nil
+	}
+	return none
+}
+
+// pickGenerativeAdapter mirrors pickEmbeddingAdapter but selects on
+// the "generation" capability instead of "embeddings". Used by
+// model.call's tool dispatch.
+//
+// Most providers ship both capabilities on the same adapter (Anthropic
+// generation + their embedding model; Ollama generation + an embedding
+// model). The dispatch is per-capability rather than per-adapter so a
+// user could in principle wire one adapter for generation and a
+// different one for embeddings — useful if they want, say, Anthropic
+// for summaries but a local Ollama model for cheap embeddings.
+func pickGenerativeAdapter(ctx context.Context, adapters []model.Adapter, logger *slog.Logger) model.Adapter {
+	for _, a := range adapters {
+		ms, err := a.Models(ctx)
+		if err != nil {
+			logger.Warn("model adapter Models() failed", "err", err)
+			continue
+		}
+		for _, m := range ms {
+			for _, cap := range m.Capabilities {
+				if cap == "text" {
+					logger.Info("generation adapter selected", "model", m.ID)
+					return a
+				}
+			}
+		}
+	}
+	logger.Info("no generation-capable model adapter configured; model.call will degrade gracefully")
+	none, err := model.New("model:none")
+	if err != nil {
 		logger.Error("model:none unavailable", "err", err)
 		return nil
 	}
