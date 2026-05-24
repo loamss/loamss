@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/permission"
@@ -16,18 +20,22 @@ import (
 
 var capsuleCmd = &cobra.Command{
 	Use:   "capsule",
-	Short: "Inspect and install capsules",
+	Short: "Inspect, install, and remove capsules",
 	Long: `Capsules are packaged Loamss agents — sandboxed subprocesses that
 expose MCP tools through the runtime. Each capsule declares its
 required capabilities, the tools it provides, and the kind of model
 it needs.
 
 Subcommands:
-  validate <path>   parse and validate a capsule's manifest
+  validate <path>      parse and validate a capsule's manifest
+  install <path>       validate, copy code, issue grants, install
+  list                 list installed capsules
+  show <name>          show an installed capsule in detail
+  uninstall <name>     revoke grants, remove code, delete record
 
-Install/list/show/uninstall and the subprocess host arrive in
-subsequent commits. For now, validate is the standalone surface
-capsule authors use to check their manifests before publishing.`,
+The subprocess host (actually running capsule code) arrives in a
+subsequent commit; installation today persists the record + grants
+so the runtime knows the capsule is present.`,
 }
 
 // --- validate ----------------------------------------------------------
@@ -177,9 +185,317 @@ func splitLines(s string) []string {
 	return out
 }
 
+// --- install -----------------------------------------------------------
+
+var (
+	capsuleInstallYes  bool
+	capsuleInstallJSON bool
+)
+
+var capsuleInstallCmd = &cobra.Command{
+	Use:   "install <path>",
+	Short: "Install a capsule onto this runtime",
+	Long: `Validates the manifest at <path>, copies the capsule's code into the
+data directory, issues grants for every declared permission, and
+persists the install record. Each issued grant produces a
+grant.create audit entry; the install itself emits capsule.installed.
+
+Prompts on a terminal for confirmation; pass --yes to skip. Fails
+fast on validation errors; partial state is rolled back on grant or
+persistence failures.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		deps, err := openCapsuleDeps(cmd)
+		if err != nil {
+			return err
+		}
+		defer deps.Close()
+
+		// Human-readable mode: show the permission slip BEFORE doing
+		// anything destructive. JSON mode skips this so the output
+		// is a single decodable object.
+		if !capsuleInstallJSON {
+			if _, err := loadAndDisplayManifest(cmd, args[0]); err != nil {
+				return err
+			}
+		}
+
+		if !capsuleInstallYes && isTerminal(os.Stdin) {
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), "\nProceed with install? [y/N] ")
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				return errors.New("aborted")
+			}
+		}
+
+		result, err := deps.installer.Install(cmd.Context(), args[0], "user")
+		if err != nil {
+			return err
+		}
+		if capsuleInstallJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(result)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"\n✓ Installed %s@%s\n  install_path:  %s\n  grants issued: %d\n",
+			result.Capsule.Name, result.Capsule.Version,
+			result.Capsule.InstallPath, len(result.GrantIDs),
+		)
+		return nil
+	},
+}
+
+// loadAndDisplayManifest parses the manifest and prints the
+// permission slip — the list of capabilities the capsule will be
+// granted. The user sees this before any persistent change.
+func loadAndDisplayManifest(cmd *cobra.Command, sourcePath string) (*capsule.Manifest, error) {
+	data, err := readManifestFromPath(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	m, err := capsule.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "Capsule %s@%s\n", m.Name, m.Version)
+	if m.Description != "" {
+		_, _ = fmt.Fprintf(out, "  %s\n", m.Description)
+	}
+	_, _ = fmt.Fprintf(out, "  Author:  %s\n", m.Author.Name)
+	_, _ = fmt.Fprintf(out, "\nThis capsule requests the following capabilities:\n")
+	for _, p := range m.Permissions {
+		marker := " "
+		if p.RequiresUserApproval {
+			marker = "!"
+		}
+		_, _ = fmt.Fprintf(out, "  %s %-25s  %s\n", marker, p.Capability, p.Rationale)
+		if len(p.Scope) > 0 {
+			raw, _ := json.Marshal(p.Scope)
+			_, _ = fmt.Fprintf(out, "      scope: %s\n", string(raw))
+		}
+	}
+	if len(m.Tools) > 0 {
+		_, _ = fmt.Fprintf(out, "\nIt will expose these tools:\n")
+		for _, t := range m.Tools {
+			_, _ = fmt.Fprintf(out, "  - %s: %s\n", t.Name, t.Description)
+		}
+	}
+	return m, nil
+}
+
+// --- list --------------------------------------------------------------
+
+var capsuleListJSON bool
+
+var capsuleListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List installed capsules",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		deps, err := openCapsuleDeps(cmd)
+		if err != nil {
+			return err
+		}
+		defer deps.Close()
+
+		caps, err := deps.store.List(cmd.Context())
+		if err != nil {
+			return err
+		}
+		if capsuleListJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			for _, c := range caps {
+				if err := enc.Encode(c); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if len(caps) == 0 {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "(no capsules installed)")
+			return nil
+		}
+		for _, c := range caps {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s@%s  %s  installed=%s\n",
+				c.Name, c.Version, c.AuthorName,
+				c.InstalledAt.UTC().Format("2006-01-02T15:04:05Z"),
+			)
+		}
+		return nil
+	},
+}
+
+// --- show --------------------------------------------------------------
+
+var capsuleShowJSON bool
+
+var capsuleShowCmd = &cobra.Command{
+	Use:   "show <name>",
+	Short: "Show an installed capsule in detail",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		deps, err := openCapsuleDeps(cmd)
+		if err != nil {
+			return err
+		}
+		defer deps.Close()
+
+		c, err := deps.store.Get(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		if capsuleShowJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(c)
+		}
+		out := cmd.OutOrStdout()
+		_, _ = fmt.Fprintf(out, "Capsule %s@%s\n\n", c.Name, c.Version)
+		_, _ = fmt.Fprintf(out, "  Author:        %s\n", c.AuthorName)
+		if c.AuthorURL != "" {
+			_, _ = fmt.Fprintf(out, "  Author URL:    %s\n", c.AuthorURL)
+		}
+		_, _ = fmt.Fprintf(out, "  Spec version:  %s\n", c.SpecVersion)
+		_, _ = fmt.Fprintf(out, "  Installed:     %s\n", c.InstalledAt.UTC().Format("2006-01-02T15:04:05Z"))
+		_, _ = fmt.Fprintf(out, "  Install path:  %s\n", c.InstallPath)
+		_, _ = fmt.Fprintf(out, "  Tools:         %d\n", len(c.Manifest.Tools))
+		_, _ = fmt.Fprintf(out, "  Permissions:   %d\n", len(c.Manifest.Permissions))
+		for _, p := range c.Manifest.Permissions {
+			_, _ = fmt.Fprintf(out, "    - %s\n", p.Capability)
+		}
+		return nil
+	},
+}
+
+// --- uninstall ---------------------------------------------------------
+
+var (
+	capsuleUninstallYes    bool
+	capsuleUninstallReason string
+)
+
+var capsuleUninstallCmd = &cobra.Command{
+	Use:   "uninstall <name>",
+	Short: "Uninstall a capsule",
+	Long: `Removes the capsule's install record, cascade-revokes every grant
+attached to the capsule principal, and deletes the on-disk install
+directory. Idempotent on missing capsule (returns an error;
+re-running after a partial cleanup is safe). Each revoked grant
+emits a grant.revoke audit entry; the uninstall itself emits
+capsule.uninstalled.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		deps, err := openCapsuleDeps(cmd)
+		if err != nil {
+			return err
+		}
+		defer deps.Close()
+
+		name := args[0]
+		c, err := deps.store.Get(cmd.Context(), name)
+		if err != nil {
+			return err
+		}
+		if !capsuleUninstallYes && isTerminal(os.Stdin) {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"About to uninstall capsule %s@%s.\nAll grants attached to this capsule will be cascade-revoked.\nContinue? [y/N] ",
+				c.Name, c.Version)
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				return errors.New("aborted")
+			}
+		}
+		if err := deps.installer.Uninstall(cmd.Context(), name, "user", capsuleUninstallReason); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Uninstalled %s@%s\n", c.Name, c.Version)
+		return nil
+	},
+}
+
+// --- shared deps -------------------------------------------------------
+
+// capsuleDeps bundles everything install/list/show/uninstall need:
+// permission store + engine + audit + capsule store + installer.
+// Constructed at the start of every capsule-touching CLI subcommand
+// and closed before return.
+type capsuleDeps struct {
+	store     *capsule.Store
+	permStore *permission.Store
+	audit     *audit.SQLite
+	engine    *permission.Engine
+	installer *capsule.Installer
+}
+
+// Close releases every handle. Errors are logged on a best-effort
+// basis; CLI exit dominates.
+func (d *capsuleDeps) Close() {
+	_ = d.store.Close()
+	_ = d.permStore.Close()
+	if d.audit != nil {
+		_ = d.audit.Close(context.Background())
+	}
+}
+
+// openCapsuleDeps opens the capsule store + permission store +
+// audit writer at their conventional paths, wires them into an
+// Installer, and returns the bundle.
+func openCapsuleDeps(cmd *cobra.Command) (*capsuleDeps, error) {
+	cfg := config.From(cmd.Context())
+	if cfg == nil {
+		return nil, errors.New("no config attached to context (programming error in CLI wiring)")
+	}
+	permStore, err := permission.Open(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return nil, err
+	}
+	capStore, err := capsule.OpenStore(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		_ = permStore.Close()
+		return nil, err
+	}
+	w, err := audit.OpenSQLite(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "audit.db"))
+	if err != nil {
+		_ = permStore.Close()
+		_ = capStore.Close()
+		return nil, err
+	}
+	engine := permission.NewEngine(permStore, w)
+	installer := capsule.NewInstaller(capStore, engine, w,
+		filepath.Join(cfg.Runtime.DataDir, "capsules"))
+	return &capsuleDeps{
+		store:     capStore,
+		permStore: permStore,
+		audit:     w,
+		engine:    engine,
+		installer: installer,
+	}, nil
+}
+
 func init() {
 	capsuleValidateCmd.Flags().BoolVar(&capsuleValidateOffline, "offline", false,
 		"skip capability-registry checks (useful when no runtime is configured)")
 	capsuleCmd.AddCommand(capsuleValidateCmd)
+
+	capsuleInstallCmd.Flags().BoolVarP(&capsuleInstallYes, "yes", "y", false, "skip the confirmation prompt")
+	capsuleInstallCmd.Flags().BoolVar(&capsuleInstallJSON, "json", false, "output as JSON")
+	capsuleCmd.AddCommand(capsuleInstallCmd)
+
+	capsuleListCmd.Flags().BoolVar(&capsuleListJSON, "json", false, "output as JSONL")
+	capsuleCmd.AddCommand(capsuleListCmd)
+
+	capsuleShowCmd.Flags().BoolVar(&capsuleShowJSON, "json", false, "output as JSON")
+	capsuleCmd.AddCommand(capsuleShowCmd)
+
+	capsuleUninstallCmd.Flags().BoolVarP(&capsuleUninstallYes, "yes", "y", false, "skip the confirmation prompt")
+	capsuleUninstallCmd.Flags().StringVar(&capsuleUninstallReason, "reason", "", "optional note recorded in the audit entry")
+	capsuleCmd.AddCommand(capsuleUninstallCmd)
+
 	rootCmd.AddCommand(capsuleCmd)
 }

@@ -20,6 +20,13 @@ type Engine struct {
 	audit audit.Writer
 }
 
+// Store returns the underlying *Store. Useful for callers that
+// need direct read access (e.g., capsule.Installer's manifest
+// validator consults the capability registry, ListGrants for the
+// uninstall cascade). Writers should generally go through Engine
+// methods so audit emission stays consistent.
+func (e *Engine) Store() *Store { return e.store }
+
 // NewEngine constructs an Engine. Both arguments are required;
 // passing nil audit is a programming error (every check must be
 // auditable per audit-spec.md). Callers running in environments
