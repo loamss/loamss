@@ -160,6 +160,52 @@ func (e *Engine) Check(ctx context.Context, req CheckRequest) (*CheckResult, err
 	return res, nil
 }
 
+// RevokeGrant marks a grant revoked and emits a grant.revoke audit
+// entry. Idempotent: revoking an already-revoked grant returns nil
+// without emitting a duplicate audit entry. The Store-level
+// RevokeGrant exists alongside this for tests or callers that
+// explicitly want to skip audit.
+//
+// decidedBy is recorded as the audit actor id; typically the
+// authenticated user/operator id. reason is an optional note
+// carried in the audit entry's data payload.
+func (e *Engine) RevokeGrant(ctx context.Context, id, decidedBy, reason string) error {
+	g, err := e.store.GetGrant(ctx, id)
+	if err != nil {
+		return err
+	}
+	if g.RevokedAt != nil {
+		// Already revoked; no audit entry to avoid duplicates.
+		return nil
+	}
+	if err := e.store.RevokeGrant(ctx, id); err != nil {
+		return err
+	}
+	entry := audit.Entry{
+		Type:    "grant.revoke",
+		Actor:   audit.Actor{Kind: audit.ActorUser, ID: defaulted(decidedBy, "user")},
+		Subject: &audit.Subject{Kind: audit.SubjectGrant, ID: g.ID},
+		Outcome: audit.OutcomeSuccess,
+		Data: map[string]any{
+			"capability":     g.Capability,
+			"principal_kind": string(g.Principal.Kind),
+			"principal_id":   g.Principal.ID,
+		},
+	}
+	if reason != "" {
+		entry.Data["reason"] = reason
+	}
+	_, _ = e.audit.Append(ctx, entry)
+	return nil
+}
+
+func defaulted(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
 // ResolveApproval is the engine's wrapper over Store.ResolveApproval
 // that also emits the corresponding audit entry. CLI and (future)
 // console paths call this; the store-only ResolveApproval exists

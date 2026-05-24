@@ -241,6 +241,26 @@ const (
 	DecisionApprovalRequired Decision = "approval_required"
 )
 
+// Grant status strings used by GrantFilter and CLI output.
+const (
+	StatusActive  = "active"
+	StatusRevoked = "revoked"
+	StatusExpired = "expired"
+	StatusAll     = "all"
+)
+
+// GrantFilter narrows a ListGrants query. Zero-valued fields impose
+// no constraint on that dimension. Status defaults to "active" if
+// empty (current grants only); pass "all" for the full set including
+// revoked and expired.
+type GrantFilter struct {
+	PrincipalKind PrincipalKind
+	PrincipalID   string
+	Capability    string
+	Status        string // active | revoked | expired | all
+	Limit         int    // 0 = default 1000
+}
+
 // Sentinel errors wrapped by store/registry/check operations.
 // Callers test with errors.Is.
 var (

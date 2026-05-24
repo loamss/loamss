@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -447,6 +448,68 @@ func (s *Store) ListGrantsByPrincipal(ctx context.Context, kind PrincipalKind, i
 	return s.queryGrants(ctx,
 		grantSelectColumns+` WHERE principal_kind = ? AND principal_id = ? ORDER BY issued_at ASC`,
 		string(kind), id)
+}
+
+// ListGrants returns grants matching the filter. Unlike
+// ListGrantsByPrincipal, this is the general-purpose query that
+// supports any combination of principal / capability / status
+// filters — used by `loamss grant list` and the (future) console.
+//
+// Status defaults to "active" when the filter's Status field is empty.
+// Use StatusAll explicitly to include revoked and expired.
+func (s *Store) ListGrants(ctx context.Context, f GrantFilter) ([]Grant, error) {
+	var (
+		conds []string
+		args  []any
+	)
+	if f.PrincipalKind != "" {
+		conds = append(conds, "principal_kind = ?")
+		args = append(args, string(f.PrincipalKind))
+	}
+	if f.PrincipalID != "" {
+		conds = append(conds, "principal_id = ?")
+		args = append(args, f.PrincipalID)
+	}
+	if f.Capability != "" {
+		conds = append(conds, "capability = ?")
+		args = append(args, f.Capability)
+	}
+
+	status := f.Status
+	if status == "" {
+		status = StatusActive
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	switch status {
+	case StatusActive:
+		conds = append(conds, "revoked_at IS NULL")
+		conds = append(conds, "(expires_at IS NULL OR expires_at > ?)")
+		args = append(args, now)
+	case StatusRevoked:
+		conds = append(conds, "revoked_at IS NOT NULL")
+	case StatusExpired:
+		conds = append(conds, "revoked_at IS NULL")
+		conds = append(conds, "expires_at IS NOT NULL")
+		conds = append(conds, "expires_at <= ?")
+		args = append(args, now)
+	case StatusAll:
+		// no extra filter
+	default:
+		return nil, fmt.Errorf("permission: unknown status filter %q", status)
+	}
+
+	q := grantSelectColumns
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += " ORDER BY issued_at DESC"
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	q += fmt.Sprintf(" LIMIT %d", limit)
+	return s.queryGrants(ctx, q, args...)
 }
 
 // ListActiveGrantsForCheck returns the currently-effective grants
