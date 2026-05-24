@@ -249,6 +249,21 @@ func runSourceAuthenticate(cmd *cobra.Command, deps *sourceDeps, name string) er
 		if err := src.CompleteAuth(ctx, map[string]string{}); err != nil {
 			return fmt.Errorf("CompleteAuth: %w", err)
 		}
+	case source.AuthFlowBrowser:
+		if flow.URL != "" {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"Open this URL in your browser:\n\n  %s\n\n", flow.URL)
+		}
+		if flow.Instructions != "" {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n", flow.Instructions)
+		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(),
+			"Waiting for the browser callback (Ctrl-C to cancel)...")
+		// CompleteAuth blocks on the source's loopback listener; the
+		// source captures the redirect itself.
+		if err := src.CompleteAuth(ctx, map[string]string{}); err != nil {
+			return fmt.Errorf("CompleteAuth: %w", err)
+		}
 	case source.AuthFlowCodePaste:
 		if flow.URL != "" {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),

@@ -12,6 +12,9 @@ import (
 	// Built-in adapters register themselves via init().
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted"
+
+	// Built-in sources register themselves via init().
+	_ "github.com/loamss/loamss/runtime/internal/source/gmail"
 )
 
 func main() {
