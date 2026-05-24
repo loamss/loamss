@@ -467,10 +467,15 @@ func (s *Store) GetGrant(ctx context.Context, id string) (*Grant, error) {
 }
 
 // ListGrantsByPrincipal returns all grants for a principal,
-// active or otherwise. Sorted by issued_at ascending.
+// active or otherwise. Sorted by issued_at ascending with id as
+// the tiebreaker — necessary because RFC3339Nano timestamps can
+// tie on fast-issuing platforms (macOS clocks have surfaced ties
+// in CI) and SQLite's default tiebreak is undefined. ULIDs within
+// a single MonotonicEntropy are guaranteed strictly increasing,
+// so id-as-tiebreaker matches insertion order.
 func (s *Store) ListGrantsByPrincipal(ctx context.Context, kind PrincipalKind, id string) ([]Grant, error) {
 	return s.queryGrants(ctx,
-		grantSelectColumns+` WHERE principal_kind = ? AND principal_id = ? ORDER BY issued_at ASC`,
+		grantSelectColumns+` WHERE principal_kind = ? AND principal_id = ? ORDER BY issued_at ASC, id ASC`,
 		string(kind), id)
 }
 
@@ -526,7 +531,8 @@ func (s *Store) ListGrants(ctx context.Context, f GrantFilter) ([]Grant, error) 
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY issued_at DESC"
+	// id as tiebreaker — see ListGrantsByPrincipal for the rationale.
+	q += " ORDER BY issued_at DESC, id DESC"
 
 	limit := f.Limit
 	if limit <= 0 {
