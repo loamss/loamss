@@ -1,0 +1,13 @@
+{
+  "name": "loamss-example-hello-world",
+  "version": "0.1.0",
+  "description": "Minimal Loamss capsule — illustrates the SDK's createCapsule + defineTool API.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "@loamss/sdk": "workspace:*"
+  }
+}

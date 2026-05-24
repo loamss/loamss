@@ -1,0 +1,42 @@
+{
+  "name": "@loamss/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for building Loamss capsules — sandboxed extensions that run inside a user's Loamss runtime.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun tsc --noEmit",
+    "lint": "bun tsc --noEmit"
+  },
+  "keywords": [
+    "loamss",
+    "mcp",
+    "model-context-protocol",
+    "capsule",
+    "sdk"
+  ],
+  "author": "Loamss contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/loamss/loamss",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loamss/loamss.git",
+    "directory": "sdk/typescript"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "bun": ">=1.1.0",
+    "node": ">=20"
+  }
+}

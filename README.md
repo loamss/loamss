@@ -146,7 +146,10 @@ Reference runtime (in `runtime/`):
 - ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
 - ✅ Source connector framework: `source:gmail` (OAuth + PKCE loopback flow, incremental sync via Gmail history)
 - ✅ CLI: `init`, `doctor`, `start`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`, `source`
+- ✅ Capsule SDK (TypeScript) — `@loamss/sdk` in [`sdk/typescript/`](sdk/typescript/): MCP-over-stdio transport, tool registration, runtime-callback client, hello-world example
 - ⏳ Additional source connectors (Calendar, Drive, Slack, GitHub)
+- ⏳ MCP client library (TypeScript) — for Path-B apps pairing with a user's Loamss
+- ⏳ Python SDK
 - ⏳ Console (Next.js)
 - ⏳ Capsule SDKs (TypeScript, Python)
 - ⏳ Additional adapters (s3, postgres, pgvector, openai, mistral)
@@ -157,7 +160,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 
 **Curious**: this README, then [`scenarios.md`](scenarios.md), then [`ROADMAP.md`](ROADMAP.md) for timelines.
 
-**Capsule developer**: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md).
+**Capsule developer**: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md), and the TypeScript SDK at [`sdk/typescript/`](sdk/typescript/) (hello-world capsule + docs).
 
 **External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances — Path B): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md), and [`topology.md`](topology.md) if you're a front-facing app with direct-from-storage delivery.
 

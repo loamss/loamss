@@ -1,0 +1,43 @@
+# Capsule manifest — see capsule-spec.md v0.1.
+#
+# The runtime reads this file when you run:
+#   loamss capsule install ./examples/hello-world
+
+spec_version: "0.1"
+
+name: com.loamss.example.hello-world
+version: 0.1.0
+description: Minimal capsule example — exposes a single `hello` tool.
+
+author:
+  name: Loamss contributors
+  url: https://github.com/loamss/loamss
+
+# This example takes no inputs from the runtime — it doesn't read
+# storage, query memory, or call models. So it requests no
+# capabilities. A real-world capsule would list memory.read,
+# memory.query, model.call, etc. here.
+permissions:
+  requires: []
+
+# Tools the capsule exposes. The runtime mounts these into its tool
+# registry as `<capsule-name>.<tool-name>`, i.e.
+# `com.loamss.example.hello-world.hello`.
+tools:
+  - name: hello
+    description: Say hello to someone (or to the world).
+    input_schema:
+      type: object
+      properties:
+        who:
+          type: string
+          description: Who to greet. Defaults to "world".
+
+# How to run the capsule. The runtime spawns this command and pipes
+# MCP frames over its stdin/stdout.
+runtime:
+  type: subprocess
+  entrypoint: bun
+  args:
+    - run
+    - src/index.ts
