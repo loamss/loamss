@@ -13,7 +13,12 @@ import (
 const (
 	defaultListenAddr     = "127.0.0.1:7777"
 	defaultStorageAdapter = "storage:fs-encrypted"
-	defaultMemoryAdapter  = "memory:sqlite-vec"
+	// defaultMemoryAdapter points at the only memory adapter shipped
+	// in v0.1. memory:sqlite-vec (with the sqlite-vec extension and
+	// proper k-NN indexing) is the planned drop-in upgrade for
+	// larger memory stores; until that adapter lands, memory:sqlite
+	// is the single supported option.
+	defaultMemoryAdapter  = "memory:sqlite"
 	defaultRedactionLevel = "default"
 	defaultLogLevel       = "info"
 	defaultLogFormat      = "text"

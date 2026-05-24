@@ -17,11 +17,23 @@ import (
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
 
+// testFixture bundles everything an mcp test needs: handler, engine,
+// store (for seeding grants), audit writer, authenticated client.
+// One construction call instead of returning a 5-tuple at every call
+// site.
+type testFixture struct {
+	h      *Handler
+	engine *permission.Engine
+	store  *permission.Store
+	audit  *audit.SQLite
+	client *permission.Client
+}
+
 // newTestHandler builds an MCP Handler with a fresh runtime.db +
 // audit.db under a temp dir, an empty Registry, and a paired test
 // client whose Principal is attached to every request via
 // withAuthedContext.
-func newTestHandler(t *testing.T) (*Handler, *permission.Engine, *audit.SQLite, *permission.Client) {
+func newTestHandler(t *testing.T) *testFixture {
 	t.Helper()
 	dir := t.TempDir()
 	ctx := context.Background()
@@ -55,7 +67,7 @@ func newTestHandler(t *testing.T) (*Handler, *permission.Engine, *audit.SQLite, 
 		ServerName:    "loamss",
 		ServerVersion: "v0.1-test",
 	})
-	return h, engine, w, c
+	return &testFixture{h: h, engine: engine, store: store, audit: w, client: c}
 }
 
 // withAuthedContext returns a new *http.Request whose context carries
@@ -91,7 +103,8 @@ func doRPC(t *testing.T, h *Handler, c *permission.Client, body any) Response {
 }
 
 func TestInitialize_HappyPath(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	resp := doRPC(t, h, c, map[string]any{
 		"jsonrpc": "2.0",
@@ -127,7 +140,8 @@ func TestInitialize_HappyPath(t *testing.T) {
 }
 
 func TestInitialize_VersionDowngradeAllowed(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	// Client asks for a future version; server returns its version
 	// and the client decides what to do.
@@ -150,7 +164,8 @@ func TestInitialize_VersionDowngradeAllowed(t *testing.T) {
 }
 
 func TestDispatch_UnknownMethod(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	resp := doRPC(t, h, c, map[string]any{
 		"jsonrpc": "2.0", "id": 42, "method": "nothing/here",
@@ -167,7 +182,8 @@ func TestDispatch_UnknownMethod(t *testing.T) {
 }
 
 func TestDispatch_RejectsMissingMethod(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	resp := doRPC(t, h, c, map[string]any{
 		"jsonrpc": "2.0", "id": 1,
@@ -178,7 +194,8 @@ func TestDispatch_RejectsMissingMethod(t *testing.T) {
 }
 
 func TestDispatch_RejectsBadJSONRPCVersion(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	resp := doRPC(t, h, c, map[string]any{
 		"jsonrpc": "1.0", "id": 1, "method": "initialize",
@@ -189,7 +206,8 @@ func TestDispatch_RejectsBadJSONRPCVersion(t *testing.T) {
 }
 
 func TestDispatch_ParseErrorOnGarbage(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("not json"))
 	req = withAuthedContext(req, c)
@@ -206,7 +224,8 @@ func TestDispatch_ParseErrorOnGarbage(t *testing.T) {
 }
 
 func TestNotification_NoResponse(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	// JSON-RPC 2.0: a notification has no id field.
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -225,7 +244,8 @@ func TestNotification_NoResponse(t *testing.T) {
 func TestMissingPrincipal_InternalError(t *testing.T) {
 	// Bypassing withAuthedContext should produce -32603 since the
 	// auth middleware is required upstream of the MCP handler.
-	h, _, _, _ := newTestHandler(t)
+	f := newTestHandler(t)
+	h := f.h
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
 		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
@@ -239,7 +259,8 @@ func TestMissingPrincipal_InternalError(t *testing.T) {
 }
 
 func TestMethodNotAllowed_PUT(t *testing.T) {
-	h, _, _, c := newTestHandler(t)
+	f := newTestHandler(t)
+	h, c := f.h, f.client
 
 	req := httptest.NewRequest(http.MethodPut, "/mcp", nil)
 	req = withAuthedContext(req, c)

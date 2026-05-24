@@ -86,7 +86,7 @@ func TestInit_ConfigContentIsValidAndLoadable(t *testing.T) {
 		"root: " + filepath.Join(dir, "storage"),
 		"path: " + filepath.Join(dir, "memory.db"),
 		"adapter: storage:fs-encrypted",
-		"adapter: memory:sqlite-vec",
+		"adapter: memory:sqlite",
 		"listen_addr: 127.0.0.1:7777",
 	} {
 		if !strings.Contains(string(body), want) {

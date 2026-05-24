@@ -13,6 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/loamss/loamss/runtime/internal/adapter/memory"
+	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite" // registers memory:sqlite
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
@@ -70,7 +72,30 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = auditWriter.Close(context.Background()) }()
 
 	engine := permission.NewEngine(store, auditWriter)
+
+	// Memory adapter — used by the memory.show MCP tool.
+	memAdapter, err := memory.New(cfg.Memory.Adapter)
+	if err != nil {
+		return fmt.Errorf("constructing memory adapter %q: %w", cfg.Memory.Adapter, err)
+	}
+	if err := memAdapter.Init(ctx, cfg.Memory.Config); err != nil {
+		return fmt.Errorf("initializing memory adapter: %w", err)
+	}
+	defer func() { _ = memAdapter.Close(context.Background()) }()
+
+	// Tool registry — runtime tools register at startup. Capsule-
+	// provided tools will join the registry at install time
+	// (Phase 1b).
 	tools := mcp.NewRegistry()
+	for _, t := range []mcp.Tool{
+		mcp.NewClientInfoTool(),
+		mcp.NewAuditReadTool(auditWriter),
+		mcp.NewMemoryShowTool(memAdapter),
+	} {
+		if err := tools.Register(t); err != nil {
+			return fmt.Errorf("registering tool %q: %w", t.Name, err)
+		}
+	}
 
 	srv := server.New(server.Options{
 		Addr:    cfg.Runtime.ListenAddr,

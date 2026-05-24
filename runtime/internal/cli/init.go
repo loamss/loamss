@@ -130,10 +130,11 @@ storage:
     root: {{STORAGE_ROOT}}
 
 # Memory adapter — vector store for entity resolution and semantic recall.
-# Default: SQLite + sqlite-vec, paired with the local storage choice.
-# Alternatives: memory:pgvector, memory:chroma, memory:qdrant
+# Default: SQLite with in-process brute-force k-NN. Acceptable up to
+# ~100k entries; swap in memory:sqlite-vec (or pgvector / chroma /
+# qdrant) when that ceiling is in reach.
 memory:
-  adapter: memory:sqlite-vec
+  adapter: memory:sqlite
   config:
     path: {{MEMORY_PATH}}
 

@@ -133,8 +133,11 @@ func (h *Handler) dispatch(r *http.Request, req Request) Response {
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(r, req)
-	// tools/list, tools/call, resources/list, resources/read land
-	// in subsequent commits. Until then, callers learn via -32601.
+	case "tools/list":
+		return h.handleToolsList(r, req)
+	case "tools/call":
+		return h.handleToolsCall(r, req)
+	// resources/list, resources/read land in commit 3.
 	default:
 		return methodNotFoundResponse(req.ID, req.Method)
 	}
