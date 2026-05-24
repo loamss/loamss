@@ -256,13 +256,13 @@ This asymmetry is intentional. Third-party data-source connectors are out of sco
 
 | Adapter ID | Status | Scope |
 | --- | --- | --- |
-| `source:gmail` | ✅ shipped | Read-only message sync via Gmail v1; OAuth + PKCE loopback flow |
+| `source:gmail` | ✅ shipped (first reference) | Read-only message sync via Gmail v1; OAuth + PKCE loopback flow |
 | `source:calendar` | ⏳ planned | Read-only event sync via Google Calendar v3 |
 | `source:slack` | ⏳ planned | Read-only message sync from selected channels |
 | `source:drive` | ⏳ planned | Read-only file metadata + content sync |
 | `source:github` | ⏳ planned | Read-only repo/issue/PR sync |
 
-See the Gmail-specific setup guide at [`docs/setup-gmail.md`](docs/setup-gmail.md) for the steps a user follows to get the first connector live.
+`source:gmail` ships first because it's the most-requested data shape and an honest stress-test of the SPI (OAuth, incremental sync, rate limits, attachments). Nothing in the runtime is Gmail-specific — the SPI is the surface, and a connector to any other provider plugs in the same way. See the Gmail-specific setup guide at [`docs/setup-gmail.md`](docs/setup-gmail.md) for the steps a user follows to get the first connector live; future connectors get their own setup guides in `docs/`.
 
 ## Adding a new source connector (developer guide)
 

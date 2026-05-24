@@ -25,7 +25,7 @@ Goal: one user, one device, one real workflow, end to end.
 - [x] Storage adapter: `storage:fs-encrypted` (AES-256-GCM at-rest encryption on the local filesystem)
 - [x] Memory adapter: `memory:sqlite` (with embedding-aware k-NN search)
 - [x] Model adapter: `model:anthropic` (+ bonus `model:ollama` for local inference, plus `model:dummy` / `model:none`)
-- [x] Connector: Gmail (`source:gmail`, read-only, OAuth + PKCE loopback flow, incremental sync via history API)
+- [x] First reference connector: Gmail (`source:gmail`) — proves the Source SPI with a real provider. The SPI is generic; Gmail is the demonstration, not the target.
 - [ ] Connector: Google Calendar
 - [ ] Reference capsule: daily briefing ("what's on my plate today")
 - [ ] Reference capsule: email triage ("clear my inbox with my approval per send")

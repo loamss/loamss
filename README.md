@@ -145,7 +145,7 @@ Reference runtime (in `runtime/`):
 - ✅ Storage adapter: `storage:fs-encrypted`
 - ✅ Memory adapter: `memory:sqlite` (with embedding-aware search)
 - ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
-- ✅ Source connector framework: `source:gmail` (OAuth + PKCE loopback flow, incremental sync via Gmail history)
+- ✅ Source connector framework + first reference connector (`source:gmail`). The SPI is provider-agnostic — Gmail is the demonstration, not the design target
 - ✅ CLI: `init`, `doctor`, `start`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`, `source`
 - ✅ Capsule SDK (TypeScript) — `@loamss/sdk` in [`sdk/typescript/`](sdk/typescript/): MCP-over-stdio transport, tool registration, runtime-callback client, hello-world example
 - ⏳ Additional source connectors (Calendar, Drive, Slack, GitHub)
@@ -179,6 +179,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`topology.md`](topology.md) — front-facing-app data flows, auth boundaries, failure modes
 - [`sources.md`](sources.md) — data-source connector spec (Source SPI + lifecycle)
 - [`memory-layer.md`](memory-layer.md) — entity + thread resolution above the memory adapter
+- [`console-design.md`](console-design.md) — IA + first-run wizard + ongoing flows for the user-facing UI
 - [`docs/setup-gmail.md`](docs/setup-gmail.md) — Google OAuth client setup for `source:gmail`
 - [`docs/build-your-first-capsule.md`](docs/build-your-first-capsule.md) — walking-through tutorial: write, install, and invoke a capsule
 - [`docs/connect-your-app.md`](docs/connect-your-app.md) — walking-through tutorial: pair an external app and drive Loamss from it
