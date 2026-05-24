@@ -117,9 +117,9 @@ Capsules are written in any language, packaged to the [capsule specification](ca
 
 ## Status
 
-**Phase 0 — specifications complete; reference implementation underway.**
+**Phase 1 — reference runtime under active development.** Phase 0 (specs) is complete; the Go runtime now boots end-to-end on a paired MCP client.
 
-The spec set is content-complete:
+Spec set (content-complete):
 
 - ✅ [Architecture](ARCHITECTURE.md) — components, flows, trust model
 - ✅ [Permission model](permission-model.md) — the capability framework
@@ -130,7 +130,24 @@ The spec set is content-complete:
 - ✅ [Extensibility](extensibility.md) — how the system grows without core changes
 - ✅ [CLI surface](cli.md) — the `loamss` command shape
 - ✅ [Scenarios](scenarios.md) — end-to-end use cases the design must support
-- ⏳ Runtime skeleton (Go) — coming after the spec freeze
+- ✅ [Topology](topology.md) — front-facing-app data flows, auth boundaries, failure modes
+- ✅ [Benchmarks](benchmarks.md) — baseline performance numbers and methodology
+
+Reference runtime (in `runtime/`):
+
+- ✅ HTTP listener with `/healthz`, `/version`, and the MCP surface
+- ✅ JSON-RPC 2.0 + SSE transport; bearer-token client auth
+- ✅ Hash-chained audit log (SQLite, WAL, `BEGIN IMMEDIATE`) + `Verify` pass
+- ✅ Permission engine with scope match primitives + grant store
+- ✅ Capsule host: subprocess + MCP-over-stdio + permission-gated callbacks
+- ✅ Storage adapter: `storage:fs-encrypted`
+- ✅ Memory adapter: `memory:sqlite` (with embedding-aware search)
+- ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
+- ✅ CLI: `init`, `doctor`, `start`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`
+- ⏳ Source/connector framework (Gmail, Calendar, etc.)
+- ⏳ Console (Next.js)
+- ⏳ Capsule SDKs (TypeScript, Python)
+- ⏳ Additional adapters (s3, postgres, pgvector, openai, mistral)
 
 See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 
@@ -140,9 +157,9 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 
 **Capsule developer**: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md).
 
-**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances — Path B): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md).
+**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances — Path B): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md), and [`topology.md`](topology.md) if you're a front-facing app with direct-from-storage delivery.
 
-**Native app builder** (you want to build an app where Loamss is the backing data store from day one — Path A): [`native-apps.md`](native-apps.md), then [`mcp-surface.md`](mcp-surface.md) for the protocol details.
+**Native app builder** (you want to build an app where Loamss is the backing data store from day one — Path A): [`native-apps.md`](native-apps.md), then [`mcp-surface.md`](mcp-surface.md) for the protocol details, then [`topology.md`](topology.md) for the deployment shape.
 
 **Adapter author** (you want your storage backend, vector DB, or model provider to plug in): [`adapter-interface.md`](adapter-interface.md).
 
@@ -153,6 +170,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the full technical picture
 - [`ROADMAP.md`](ROADMAP.md) — what we're building in what order
 - [`scenarios.md`](scenarios.md) — end-to-end use cases the design must support
+- [`topology.md`](topology.md) — front-facing-app data flows, auth boundaries, failure modes
 - [`permission-model.md`](permission-model.md) — the capability framework
 - [`mcp-surface.md`](mcp-surface.md) — the MCP interface Loamss exposes to external consumers
 - [`capsule-spec.md`](capsule-spec.md) — the capsule format
@@ -161,11 +179,15 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`extensibility.md`](extensibility.md) — what's open for extension and what's stable; anti-patterns in code review
 - [`native-apps.md`](native-apps.md) — building apps where Loamss is the backing data store (Path A)
 - [`cli.md`](cli.md) — the `loamss` CLI surface
+- [`benchmarks.md`](benchmarks.md) — baseline performance numbers and methodology
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute
+- [`SECURITY.md`](SECURITY.md) — vulnerability disclosure policy
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community standards
 - [`CLAUDE.md`](CLAUDE.md) — context for Claude Code agents working on this repo
 
 ## License
 
-[Apache-2.0](LICENSE). Open source, with a patent grant. Contributions welcome — `CONTRIBUTING.md` lands with the runtime skeleton.
+[Apache-2.0](LICENSE). Open source, with a patent grant. Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). Security reports: [`SECURITY.md`](SECURITY.md).
 
 ## Canonical URLs
 
