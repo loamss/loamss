@@ -50,12 +50,13 @@ loamss-*.tar.gz
 loamss-*.zip
 
 # Runtime local state (when the daemon exists)
+# Use specific paths, not bare names, so we don't accidentally
+# match source directories (e.g., runtime/internal/audit/).
 .loamss/
 loamss-data/
 *.sqlite
 *.sqlite3
 *.db
-audit/
 
 # Logs
 *.log
