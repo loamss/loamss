@@ -19,6 +19,7 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/anthropic" // registers model:anthropic
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy"     // registers model:dummy
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"      // registers model:none
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/ollama"    // registers model:ollama
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
