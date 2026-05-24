@@ -199,6 +199,11 @@ func (e *Engine) RevokeGrant(ctx context.Context, id, decidedBy, reason string) 
 	return nil
 }
 
+// defaulted returns s if non-empty, else fallback. Kept as a generic
+// helper rather than hardcoded to "user" because future callers
+// (capsule installer, scheduled rotation) will pass other defaults.
+//
+//nolint:unparam // fallback is currently always "user"; preserved for future call sites
 func defaulted(s, fallback string) string {
 	if s == "" {
 		return fallback

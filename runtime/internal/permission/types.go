@@ -261,6 +261,98 @@ type GrantFilter struct {
 	Limit         int    // 0 = default 1000
 }
 
+// Client is an external MCP client paired with the runtime. Clients
+// are one of the two principal kinds; their grants live in the same
+// grants table as capsules', keyed on Principal{Kind: PrincipalClient,
+// ID: <Client.ID>}.
+//
+// The bearer credential is never stored in plaintext. Only the
+// SHA-256 hex of the secret portion is persisted in CredentialHash;
+// the full token is returned exactly once at RedeemPairingCode time.
+type Client struct {
+	// ID is the stable client identifier (cli-<ULID>). Used as the
+	// Principal ID for every grant the client holds.
+	ID string `json:"id"`
+
+	// Name is the user-facing display name, supplied at `pair` time
+	// ("ChatGPT laptop", "Claude desktop"). Not unique; for display only.
+	Name string `json:"name"`
+
+	// CredentialHash is the hex-encoded SHA-256 of the bearer-token
+	// secret portion. Never the plaintext.
+	CredentialHash string `json:"-"`
+
+	// Metadata is opaque JSON attached at pair time. Used to record
+	// pairing context (paired_via, client public key, version) without
+	// schema churn. The runtime treats this as inert.
+	Metadata map[string]any `json:"metadata,omitempty"`
+
+	// PairedAt is when the pairing code was redeemed.
+	PairedAt time.Time `json:"paired_at"`
+
+	// LastSeenAt is the most recent successful AuthenticateClient
+	// timestamp. Nil if the client has never authenticated.
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+
+	// RevokedAt, if non-nil, marks the client as revoked. Revoked
+	// clients fail authentication and all their grants are
+	// cascade-revoked at the same time.
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+// Active returns true if the client can authenticate right now.
+func (c Client) Active() bool { return c.RevokedAt == nil }
+
+// ClientFilter narrows a ListClients query. Status defaults to
+// "active" when empty.
+type ClientFilter struct {
+	Status string // active | revoked | all
+	Limit  int    // 0 = default 1000
+}
+
+// PairingCode is a one-time, TTL-bound code issued by
+// `loamss client pair`. The client (or the user, on the client's
+// behalf) redeems it to receive bearer credentials. Codes are
+// single-use; redemption marks them as such.
+//
+// Grants are issued separately via `loamss grant create` after
+// redemption — the pairing code carries no scope itself.
+type PairingCode struct {
+	// Code is the human-readable redemption string (e.g.,
+	// "ABCD-1234"). It is the table's primary key.
+	Code string `json:"code"`
+
+	// ClientName is the display name supplied at code generation;
+	// passed through to the Client created at redemption.
+	ClientName string `json:"client_name"`
+
+	// CreatedBy is the actor that generated the code (typically
+	// "user"); recorded for audit.
+	CreatedBy string `json:"created_by,omitempty"`
+
+	// CreatedAt is when the code was generated.
+	CreatedAt time.Time `json:"created_at"`
+
+	// ExpiresAt is when the code stops being redeemable. Codes do
+	// not become reusable after expiry — they are dead.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// RedeemedAt is when the code was consumed, if at all.
+	RedeemedAt *time.Time `json:"redeemed_at,omitempty"`
+
+	// RedeemedClientID is the Client.ID created on redemption. Nil
+	// while the code is still pending.
+	RedeemedClientID string `json:"redeemed_client_id,omitempty"`
+}
+
+// Active returns true if the code can still be redeemed at `now`.
+func (p PairingCode) Active(now time.Time) bool {
+	if p.RedeemedAt != nil {
+		return false
+	}
+	return now.Before(p.ExpiresAt)
+}
+
 // Sentinel errors wrapped by store/registry/check operations.
 // Callers test with errors.Is.
 var (
@@ -298,4 +390,27 @@ var (
 	// ErrInvalidApprovalDowngrade: tried to set a grant's
 	// RequiresUserApproval=false on a capability whose default is true.
 	ErrInvalidApprovalDowngrade = errors.New("permission: cannot weaken default approval requirement")
+
+	// ErrClientNotFound: the requested client does not exist.
+	ErrClientNotFound = errors.New("permission: client not found")
+
+	// ErrClientRevoked: the client exists but has been revoked. Returned
+	// by AuthenticateClient; revoked clients cannot authenticate.
+	ErrClientRevoked = errors.New("permission: client has been revoked")
+
+	// ErrPairingCodeNotFound: the supplied code does not match any
+	// issued pairing code.
+	ErrPairingCodeNotFound = errors.New("permission: pairing code not found")
+
+	// ErrPairingCodeExpired: the code exists but its expires_at has
+	// passed. Expired codes are dead — they cannot be revived.
+	ErrPairingCodeExpired = errors.New("permission: pairing code expired")
+
+	// ErrPairingCodeAlreadyRedeemed: the code was single-use and has
+	// already been redeemed.
+	ErrPairingCodeAlreadyRedeemed = errors.New("permission: pairing code already redeemed")
+
+	// ErrInvalidCredential: the supplied bearer token did not match
+	// any active client. Used by AuthenticateClient.
+	ErrInvalidCredential = errors.New("permission: invalid credential")
 )

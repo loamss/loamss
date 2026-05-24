@@ -131,6 +131,30 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
 CREATE INDEX IF NOT EXISTS idx_approvals_state ON pending_approvals(state);
 CREATE INDEX IF NOT EXISTS idx_approvals_principal ON pending_approvals(principal_kind, principal_id);
 `,
+	// 2: external-client pairing — clients table + single-use codes.
+	`
+CREATE TABLE IF NOT EXISTS clients (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    credential_hash TEXT NOT NULL,
+    metadata_json   TEXT,
+    paired_at       TEXT NOT NULL,
+    last_seen_at    TEXT,
+    revoked_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_clients_revoked ON clients(revoked_at);
+
+CREATE TABLE IF NOT EXISTS pairing_codes (
+    code                 TEXT PRIMARY KEY,
+    client_name          TEXT NOT NULL,
+    created_by           TEXT,
+    created_at           TEXT NOT NULL,
+    expires_at           TEXT NOT NULL,
+    redeemed_at          TEXT,
+    redeemed_client_id   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pairing_codes_open ON pairing_codes(redeemed_at, expires_at);
+`,
 }
 
 // migrate brings the database schema up to the latest version and
@@ -780,4 +804,280 @@ func validateScope(scope map[string]any, schema ScopeSchema) error {
 		}
 	}
 	return nil
+}
+
+// --- Clients -----------------------------------------------------------
+
+// InsertClient persists a Client. Caller is expected to have already
+// assigned ID, CredentialHash, and PairedAt. Used internally by
+// Engine.RedeemPairingCode (which is the only caller that should
+// create new clients in production); exposed on the store for tests
+// and future migration tooling.
+func (s *Store) InsertClient(ctx context.Context, c Client) error {
+	metaJSON, err := encodeMetadataJSON(c.Metadata)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+        INSERT INTO clients (
+            id, name, credential_hash, metadata_json, paired_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.CredentialHash, metaJSON,
+		c.PairedAt.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		return fmt.Errorf("permission: inserting client: %w", err)
+	}
+	return nil
+}
+
+// GetClient returns a client by id (regardless of revoked state),
+// or ErrClientNotFound.
+func (s *Store) GetClient(ctx context.Context, id string) (*Client, error) {
+	row := s.db.QueryRowContext(ctx, clientSelectColumns+` WHERE id = ?`, id)
+	c, err := scanClient(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrClientNotFound, id)
+	}
+	return c, err
+}
+
+// ListClients returns clients matching the filter, newest first.
+// Status defaults to "active" if empty.
+func (s *Store) ListClients(ctx context.Context, f ClientFilter) ([]Client, error) {
+	var (
+		conds []string
+		args  []any
+	)
+	status := f.Status
+	if status == "" {
+		status = StatusActive
+	}
+	switch status {
+	case StatusActive:
+		conds = append(conds, "revoked_at IS NULL")
+	case StatusRevoked:
+		conds = append(conds, "revoked_at IS NOT NULL")
+	case StatusAll:
+		// no extra filter
+	default:
+		return nil, fmt.Errorf("permission: unknown client status filter %q", status)
+	}
+
+	q := clientSelectColumns
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += " ORDER BY paired_at DESC"
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	q += fmt.Sprintf(" LIMIT %d", limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("permission: listing clients: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Client
+	for rows.Next() {
+		c, err := scanClient(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+// RevokeClient marks a client revoked. Idempotent (already-revoked is
+// not an error). Does NOT cascade-revoke that client's grants on its
+// own — Engine.RevokeClient handles the cascade plus audit; the
+// store-level method exists for tests and explicit-use callers.
+func (s *Store) RevokeClient(ctx context.Context, id string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE clients SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("permission: revoking client %s: %w", id, err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		var exists bool
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM clients WHERE id = ?)`, id,
+		).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("%w: %s", ErrClientNotFound, id)
+		}
+		// Already revoked — idempotent success.
+	}
+	return nil
+}
+
+// TouchClientLastSeen records a successful authentication. Called
+// from Engine.AuthenticateClient; idempotent and best-effort (errors
+// surface but do not invalidate the authentication).
+func (s *Store) TouchClientLastSeen(ctx context.Context, id string, when time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE clients SET last_seen_at = ? WHERE id = ?`,
+		when.UTC().Format(time.RFC3339Nano), id,
+	)
+	if err != nil {
+		return fmt.Errorf("permission: touching client %s: %w", id, err)
+	}
+	return nil
+}
+
+const clientSelectColumns = `SELECT id, name, credential_hash, metadata_json,
+       paired_at, last_seen_at, revoked_at
+       FROM clients`
+
+func scanClient(r rowScanner) (*Client, error) {
+	var (
+		c           Client
+		metaStr     sql.NullString
+		pairedStr   string
+		lastSeenStr sql.NullString
+		revokedStr  sql.NullString
+	)
+	if err := r.Scan(&c.ID, &c.Name, &c.CredentialHash, &metaStr,
+		&pairedStr, &lastSeenStr, &revokedStr); err != nil {
+		return nil, err
+	}
+	if metaStr.Valid && metaStr.String != "" && metaStr.String != "null" {
+		if err := json.Unmarshal([]byte(metaStr.String), &c.Metadata); err != nil {
+			return nil, fmt.Errorf("permission: decoding client metadata: %w", err)
+		}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, pairedStr); err == nil {
+		c.PairedAt = t
+	}
+	if lastSeenStr.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, lastSeenStr.String); err == nil {
+			c.LastSeenAt = &t
+		}
+	}
+	if revokedStr.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, revokedStr.String); err == nil {
+			c.RevokedAt = &t
+		}
+	}
+	return &c, nil
+}
+
+func encodeMetadataJSON(m map[string]any) (sql.NullString, error) {
+	if len(m) == 0 {
+		return sql.NullString{}, nil
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("permission: encoding metadata: %w", err)
+	}
+	return sql.NullString{String: string(data), Valid: true}, nil
+}
+
+// --- Pairing codes -----------------------------------------------------
+
+// InsertPairingCode persists a new code. Caller assigns Code,
+// CreatedAt, and ExpiresAt. Returns an error if the code collides
+// (vanishingly unlikely with a 40-bit code space and TTLs in
+// minutes, but handled rather than panicked).
+func (s *Store) InsertPairingCode(ctx context.Context, p PairingCode) error {
+	if _, err := s.db.ExecContext(ctx, `
+        INSERT INTO pairing_codes (
+            code, client_name, created_by, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+		p.Code, p.ClientName, nullableString(p.CreatedBy),
+		p.CreatedAt.UTC().Format(time.RFC3339Nano),
+		p.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		return fmt.Errorf("permission: inserting pairing code: %w", err)
+	}
+	return nil
+}
+
+// GetPairingCode returns a code's record by its string value. Useful
+// for inspection; redemption goes through MarkPairingCodeRedeemed
+// which does an atomic check-and-set.
+func (s *Store) GetPairingCode(ctx context.Context, code string) (*PairingCode, error) {
+	row := s.db.QueryRowContext(ctx, pairingCodeSelectColumns+` WHERE code = ?`, code)
+	p, err := scanPairingCode(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrPairingCodeNotFound, code)
+	}
+	return p, err
+}
+
+// MarkPairingCodeRedeemed atomically validates and consumes a code.
+// On success returns the (now-redeemed) code row. Errors:
+// ErrPairingCodeNotFound, ErrPairingCodeExpired,
+// ErrPairingCodeAlreadyRedeemed.
+//
+// The atomic UPDATE ... WHERE redeemed_at IS NULL AND expires_at > ?
+// pattern means two concurrent redemption attempts can't both win.
+func (s *Store) MarkPairingCodeRedeemed(ctx context.Context, code, clientID string, now time.Time) (*PairingCode, error) {
+	nowStr := now.UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `
+        UPDATE pairing_codes
+        SET redeemed_at = ?, redeemed_client_id = ?
+        WHERE code = ? AND redeemed_at IS NULL AND expires_at > ?`,
+		nowStr, clientID, code, nowStr,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("permission: redeeming code: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		// Disambiguate: missing / expired / already-redeemed.
+		p, err := s.GetPairingCode(ctx, code)
+		if err != nil {
+			return nil, err
+		}
+		if p.RedeemedAt != nil {
+			return nil, fmt.Errorf("%w: %s", ErrPairingCodeAlreadyRedeemed, code)
+		}
+		return nil, fmt.Errorf("%w: %s", ErrPairingCodeExpired, code)
+	}
+	return s.GetPairingCode(ctx, code)
+}
+
+const pairingCodeSelectColumns = `SELECT code, client_name, created_by, created_at,
+       expires_at, redeemed_at, redeemed_client_id
+       FROM pairing_codes`
+
+func scanPairingCode(r rowScanner) (*PairingCode, error) {
+	var (
+		p             PairingCode
+		createdBy     sql.NullString
+		createdStr    string
+		expiresStr    string
+		redeemedStr   sql.NullString
+		redeemedIDStr sql.NullString
+	)
+	if err := r.Scan(&p.Code, &p.ClientName, &createdBy, &createdStr,
+		&expiresStr, &redeemedStr, &redeemedIDStr); err != nil {
+		return nil, err
+	}
+	if createdBy.Valid {
+		p.CreatedBy = createdBy.String
+	}
+	if t, err := time.Parse(time.RFC3339Nano, createdStr); err == nil {
+		p.CreatedAt = t
+	}
+	if t, err := time.Parse(time.RFC3339Nano, expiresStr); err == nil {
+		p.ExpiresAt = t
+	}
+	if redeemedStr.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, redeemedStr.String); err == nil {
+			p.RedeemedAt = &t
+		}
+	}
+	if redeemedIDStr.Valid {
+		p.RedeemedClientID = redeemedIDStr.String
+	}
+	return &p, nil
 }
