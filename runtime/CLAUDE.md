@@ -27,8 +27,14 @@ Components (planned, not yet present):
   - `internal/adapter/memory/` — memory adapters (sqlite-vec, pgvector, chroma, qdrant)
   - `internal/adapter/model/` — model adapters (anthropic, openai, mistral, ollama)
 - `internal/capsule/` — capsule host (subprocess + MCP)
-- `internal/source/` — source/connector framework (Gmail, Calendar, etc.)
 - `pkg/` — if/when we expose anything for external Go users
+
+Components (current, in progress):
+
+- `internal/source/` — source/connector framework: Source SPI, registry,
+  credential store, sources table in runtime.db, and the `loamss source`
+  CLI surface. Concrete connectors (source:gmail, source:calendar) land
+  in follow-up commits.
 
 `pkg/` is empty today and may stay empty. The runtime is a single binary; embedding it as a library is not a goal in v0.1.
 
