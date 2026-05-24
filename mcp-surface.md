@@ -10,6 +10,16 @@ This spec covers Loamss-specific contracts layered on top of MCP. It does **not*
 
 This spec also does **not** cover the internal MCP used between the runtime and locally-installed capsules. That contract lives in `capsule-spec.md`. The two MCP boundaries are deliberately distinct: external clients face this surface; capsules face the capsule-runtime surface.
 
+## Two integration patterns
+
+External clients fall into two distinct categories that use this surface differently:
+
+- **Existing apps adding Loamss support (Path B)**: an app with its own database and user accounts adds an MCP client to read Loamss content as a context source, or to write specific outputs back. The app's architecture is unchanged; Loamss is one of several context sources alongside whatever else it integrates with. ChatGPT, Cursor, and most content platforms fall here. This spec is sufficient for Path B integrations.
+
+- **Native Loamss apps (Path A)**: an app designed from the start to use the user's Loamss as its backing data store. The app's backend stores essentially nothing about user content; everything goes through this surface. A native note-taking app, a Loamss-aware journaling tool, or a creator platform that holds no media falls here. Path A integrators should read this spec for the protocol, then `native-apps.md` for the design pattern.
+
+Both kinds of clients use the same pairing flow, the same scoped grants, the same tool/resource/event mechanics. The difference is architectural: Path B keeps its own storage; Path A treats the user's Loamss as the storage.
+
 ## What the surface exposes
 
 External clients see four kinds of interactions, all gated by the permission framework:

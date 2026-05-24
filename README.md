@@ -94,6 +94,16 @@ These aren't speculative. See [`scenarios.md`](scenarios.md) for the seven end-t
 - Not a SaaS lock-in. If we stop being useful, you point another runtime at your data and walk away.
 - Not "for AI." AI tools are one class of consumer. The framework treats every consumer the same.
 
+## Two ways to build with Loamss
+
+Loamss assumes apps that treat user-owned data substrates as first-class. **That ecosystem is new.** Today most apps hold user data in their own databases and offer at most a "download ZIP" export. Two paths exist for builders:
+
+**Path A — Native Loamss apps.** Your app is designed around Loamss from day one. The user's Loamss IS the storage layer; your backend is a thin layer that holds essentially nothing about the user's content. Examples: a note-taking app where notes are entities in the user's Loamss; a creator platform that streams videos from the user's S3 via Loamss-issued signed URLs; an AI assistant whose entire context lives in the user's data substrate. See [`native-apps.md`](native-apps.md) for the pattern, worked examples, and the honest tradeoffs.
+
+**Path B — Existing apps adding Loamss support.** Your app already exists with its own storage and user accounts. You add an MCP client so users can optionally pair their Loamss for context, or write specific outputs back to it. Your architecture is unchanged; Loamss becomes one of several context sources. See [`mcp-surface.md`](mcp-surface.md) for what to integrate with.
+
+Path A grows the ecosystem. Path B follows when there's enough user demand to make it worth the effort. Today, the most leveraged work is on Path A.
+
 ## Capsules — the extensibility surface
 
 A **capsule** is a packaged unit that extends what Loamss can do with your data. Capsules are sandboxed (subprocess + MCP, with WASM planned), signed, and permission-gated. Four roles, all defined by what they do:
@@ -130,7 +140,9 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 
 **Capsule developer**: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md).
 
-**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md).
+**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances — Path B): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md).
+
+**Native app builder** (you want to build an app where Loamss is the backing data store from day one — Path A): [`native-apps.md`](native-apps.md), then [`mcp-surface.md`](mcp-surface.md) for the protocol details.
 
 **Adapter author** (you want your storage backend, vector DB, or model provider to plug in): [`adapter-interface.md`](adapter-interface.md).
 
@@ -147,6 +159,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`adapter-interface.md`](adapter-interface.md) — storage / memory / model adapter contracts
 - [`audit-spec.md`](audit-spec.md) — audit log schema and tamper-evidence chain
 - [`extensibility.md`](extensibility.md) — what's open for extension and what's stable; anti-patterns in code review
+- [`native-apps.md`](native-apps.md) — building apps where Loamss is the backing data store (Path A)
 - [`cli.md`](cli.md) — the `loamss` CLI surface
 - [`CLAUDE.md`](CLAUDE.md) — context for Claude Code agents working on this repo
 
