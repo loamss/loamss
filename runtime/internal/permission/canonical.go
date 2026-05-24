@@ -23,9 +23,13 @@ var reservedExceptions = map[string]bool{
 	"audit.read": true,
 }
 
-// isReservedNamespace reports whether name falls within a reserved
-// namespace and is not on the exceptions list.
-func isReservedNamespace(name string) bool {
+// IsReservedNamespace reports whether name falls within a reserved
+// namespace (runtime.*, loamss.*, audit.*, permission.*, pairing.*)
+// and is not on the exceptions list. Capsule manifests are rejected
+// at validate time if they declare a capability matching this rule.
+// Exported so the capsule package can validate without re-implementing
+// the rule.
+func IsReservedNamespace(name string) bool {
 	if reservedExceptions[name] {
 		return false
 	}
@@ -36,6 +40,10 @@ func isReservedNamespace(name string) bool {
 	}
 	return false
 }
+
+// isReservedNamespace is the package-private alias preserved for the
+// store's internal use. New code should call the exported variant.
+func isReservedNamespace(name string) bool { return IsReservedNamespace(name) }
 
 // namespaceOf returns the leading dot-separated component of a
 // capability name, or the whole name if no dot is present.
@@ -76,6 +84,24 @@ func canonicalCapabilities(now time.Time) []CapabilityDef {
 			Scope: ScopeSchema{
 				"entities":              MatchSetIntersect,
 				"time_range":            MatchRangeIncludes,
+				"data_classes_included": MatchSetSubset,
+				"data_classes_excluded": MatchSetExcludes,
+			},
+			RegisteredAt: now,
+		},
+		{
+			// memory.write is how capsules (and external clients
+			// granted it explicitly) persist new entities into
+			// memory. Scope narrows by entity type / namespace —
+			// a tax-organizer capsule with scope
+			// {entities: ["com.acme.tax/receipt"]} can write only
+			// receipts, not arbitrary entries.
+			Name:            "memory.write",
+			Namespace:       "memory",
+			Direction:       DirectionInternal,
+			DefaultApproval: false,
+			Scope: ScopeSchema{
+				"entities":              MatchSetIntersect,
 				"data_classes_included": MatchSetSubset,
 				"data_classes_excluded": MatchSetExcludes,
 			},

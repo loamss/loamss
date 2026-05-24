@@ -71,7 +71,15 @@ type SQLite struct {
 	db       *sql.DB
 	path     string
 	lastHash string
-	ulidEnt  *ulid.MonotonicEntropy
+	// lastID is the highest id we've observed in the database. Loaded
+	// at Open from the head row and updated on every Append. Guards
+	// against the ULID-not-monotonic-across-processes bug: when two
+	// writers share the same millisecond timestamp, the second
+	// writer's entropy is freshly seeded and might produce a smaller
+	// ULID than the first. nextID checks this invariant and bumps
+	// the timestamp if needed.
+	lastID  string
+	ulidEnt *ulid.MonotonicEntropy
 }
 
 // OpenSQLite constructs and initializes a SQLite-backed Writer.
@@ -138,12 +146,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_outcome   ON audit_entries(outcome);
 `
 
 func (w *SQLite) loadHeadHash(ctx context.Context) error {
-	var h sql.NullString
+	var (
+		h  sql.NullString
+		id sql.NullString
+	)
 	err := w.db.QueryRowContext(ctx,
-		`SELECT hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
-	).Scan(&h)
+		`SELECT id, hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
+	).Scan(&id, &h)
 	if errors.Is(err, sql.ErrNoRows) {
 		w.lastHash = GenesisHash
+		w.lastID = ""
 		return nil
 	}
 	if err != nil {
@@ -151,9 +163,12 @@ func (w *SQLite) loadHeadHash(ctx context.Context) error {
 	}
 	if !h.Valid || h.String == "" {
 		w.lastHash = GenesisHash
-		return nil
+	} else {
+		w.lastHash = h.String
 	}
-	w.lastHash = h.String
+	if id.Valid {
+		w.lastID = id.String
+	}
 	return nil
 }
 
@@ -210,19 +225,28 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 		}
 	}()
 
-	// Re-read the authoritative head hash inside the write-locked
-	// transaction. Concurrent writers cannot have changed it
-	// underneath us because BEGIN IMMEDIATE blocks them.
-	var head sql.NullString
+	// Re-read the authoritative head (id + hash) inside the write-
+	// locked transaction. Concurrent writers cannot have changed it
+	// underneath us because BEGIN IMMEDIATE blocks them. Refreshing
+	// lastID here is what prevents the "two processes share the
+	// same millisecond, second writer generates a smaller ULID"
+	// failure — nextID below uses lastID as its lower bound.
+	var (
+		headHash sql.NullString
+		headID   sql.NullString
+	)
 	err = conn.QueryRowContext(ctx,
-		`SELECT hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
-	).Scan(&head)
+		`SELECT id, hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
+	).Scan(&headID, &headHash)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("audit: reading head in tx: %w", err)
 	}
 	prevHash := GenesisHash
-	if head.Valid && head.String != "" {
-		prevHash = head.String
+	if headHash.Valid && headHash.String != "" {
+		prevHash = headHash.String
+	}
+	if headID.Valid && headID.String > w.lastID {
+		w.lastID = headID.String
 	}
 
 	now := time.Now().UTC()
@@ -280,12 +304,42 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 	return &e, nil
 }
 
+// nextID generates the next audit entry id. Two correctness
+// invariants:
+//
+//  1. IDs must be strictly increasing in INSERTION order, because
+//     Verify walks the chain by ORDER BY id ASC and expects each
+//     entry's prev_hash to reference the prior entry.
+//
+//  2. Across-process insertion order must be respected — when a
+//     CLI invocation writes after a daemon write (or two daemons
+//     write to the same db), the second writer's id must exceed
+//     the first writer's id.
+//
+// ULIDs guarantee (1) within a single MonotonicEntropy instance
+// but NOT across processes that share the same millisecond
+// timestamp (each process's MonotonicEntropy seeds independently
+// from rand.Reader). We enforce (2) here by tracking w.lastID
+// (loaded at Open + updated on every Append) and bumping the
+// timestamp if the freshly-generated ULID would sort at or below
+// it.
 func (w *SQLite) nextID(now time.Time) (string, error) {
-	u, err := ulid.New(ulid.Timestamp(now), w.ulidEnt)
-	if err != nil {
-		return "", fmt.Errorf("audit: generating ULID: %w", err)
+	for attempt := 0; attempt < 100; attempt++ {
+		u, err := ulid.New(ulid.Timestamp(now), w.ulidEnt)
+		if err != nil {
+			return "", fmt.Errorf("audit: generating ULID: %w", err)
+		}
+		id := "aud-" + u.String()
+		if w.lastID == "" || id > w.lastID {
+			w.lastID = id
+			return id, nil
+		}
+		// Generated id is <= last id. Advance the timestamp by 1ms
+		// and retry — ULID ordering is timestamp-major, so bumping
+		// guarantees forward progress.
+		now = now.Add(time.Millisecond)
 	}
-	return "aud-" + u.String(), nil
+	return "", fmt.Errorf("audit: failed to generate monotonic id after 100 attempts (clock skew?)")
 }
 
 // marshalNullableJSON serializes v to JSON, returning an invalid

@@ -1,0 +1,51 @@
+spec_version: "0.1"
+name: email-drafter
+version: 1.4.0
+author:
+  name: Acme Capsules Inc.
+  url: https://acme.example
+  key_id: acme-2026-01
+
+permissions:
+  - capability: memory.read
+    scope:
+      entities: ["people", "projects"]
+    rationale: "Recall context about correspondents and topics."
+  - capability: memory.write
+    scope:
+      entities: ["draft"]
+    rationale: "Persist drafted replies."
+
+tools:
+  - name: draft_reply
+    description: "Draft a reply to a specific email thread."
+    input_schema:
+      type: object
+      properties:
+        thread_id:
+          type: string
+        instructions:
+          type: string
+      required: [thread_id]
+  - name: list_pending_replies
+    description: "List emails that look like they need a reply."
+    input_schema:
+      type: object
+
+model_requirements:
+  capabilities: ["text", "long_context"]
+  min_context_tokens: 32000
+  preferred_quality: high
+  forbidden_data_classes: []
+
+runtime:
+  type: subprocess
+  entrypoint: ["node", "code/server.js"]
+  protocol: mcp
+  resources:
+    memory_mb: 256
+    cpu_quota: 0.5
+
+description: "Drafts email replies with full context from your inbox and notes."
+tags: [email, productivity]
+license: Apache-2.0

@@ -1,0 +1,55 @@
+spec_version: "0.1"
+name: tax-organizer
+version: 2.1.0-beta.3
+author:
+  name: Acme Tax Capsules
+  key_id: acme-2026-tax
+
+permissions:
+  - capability: memory.read
+    scope:
+      entities: ["receipt", "deduction"]
+    rationale: "Read prior tax entries to avoid duplicate imports."
+  - capability: memory.write
+    scope:
+      entities: ["com.acme.tax/receipt", "com.acme.tax/deduction"]
+    rationale: "Persist receipts and deductions extracted from inputs."
+
+tools:
+  - name: import_year
+    description: "Crawl a year of email and files; extract receipts."
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: integer
+      required: [year]
+
+model_requirements:
+  capabilities: ["text"]
+  preferred_quality: balanced
+
+runtime:
+  type: subprocess
+  entrypoint: ["./bin/tax-organizer"]
+  protocol: mcp
+
+memory_extensions:
+  entity_types:
+    - name: receipt
+      namespace: com.acme.tax
+      description: "A receipt extracted from email or files for tax purposes."
+      schema:
+        type: object
+        required: [vendor, amount, date]
+        properties:
+          vendor:
+            type: string
+          amount:
+            type: number
+            minimum: 0
+          date:
+            type: string
+            format: date
+      provenance_required: true
+      data_classes: [financial]
