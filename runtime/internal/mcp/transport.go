@@ -83,12 +83,21 @@ type Transport struct {
 	startOnce sync.Once
 	closeOnce sync.Once
 
+	// stopOnce gates the close(stopCh) call so both Close (local
+	// shutdown) and the read loop's peer-EOF path can safely
+	// attempt to signal stopCh without risking a double-close
+	// panic.
+	stopOnce sync.Once
+
 	// doneCh closes when the read loop has exited. Close blocks
 	// on this.
 	doneCh chan struct{}
 
-	// stopCh is closed by Close to signal in-flight handler
-	// goroutines to abandon work.
+	// stopCh is closed when the transport should stop — either by
+	// explicit Close or by the read loop detecting peer EOF.
+	// Signals in-flight handler goroutines to abandon work and
+	// signals waiting Request callers to fail with
+	// ErrTransportClosed.
 	stopCh chan struct{}
 }
 
@@ -136,9 +145,14 @@ func (t *Transport) Start() {
 // Close stops the read loop and drains any pending requests with
 // ErrTransportClosed. Blocks until the read goroutine exits.
 // Idempotent.
+//
+// The stopCh-close races with the read loop's own stopCh-close on
+// peer EOF; whichever runs first wins via the select guard. Once
+// doneCh closes, draining has already happened in readLoop's
+// deferred cleanup, so Close just waits for the goroutine.
 func (t *Transport) Close() error {
 	t.closeOnce.Do(func() {
-		close(t.stopCh)
+		t.signalStop()
 		// Closing the underlying reader (if it supports it) makes
 		// the read loop's scanner exit immediately rather than
 		// waiting on stdin. Without this, the read loop would block
@@ -149,8 +163,13 @@ func (t *Transport) Close() error {
 		}
 	})
 	<-t.doneCh
-	t.drainPending()
 	return nil
+}
+
+// signalStop closes stopCh exactly once across all callers
+// (Close, readLoop on peer EOF). Subsequent calls are no-ops.
+func (t *Transport) signalStop() {
+	t.stopOnce.Do(func() { close(t.stopCh) })
 }
 
 // readLoop reads messages from r line-by-line, decodes each as a
@@ -163,8 +182,22 @@ func (t *Transport) Close() error {
 //   - has "result" or "error", has "id" → response (route to
 //     pending channel)
 //   - anything else → malformed; log and skip.
+//
+// When the read loop exits (peer EOF, error, or local Close), it
+// drains any pending Requests with ErrTransportClosed and signals
+// done. Without that drain, a Request waiting for a response from
+// a peer that just died would block until its ctx deadline.
 func (t *Transport) readLoop() {
-	defer close(t.doneCh)
+	defer func() {
+		// Mark the transport as stopped so any Request issued
+		// after the read loop exits returns immediately, and
+		// drain currently-pending Requests with ErrTransportClosed.
+		// signalStop is sync.Once-guarded so it's safe even if
+		// Close already ran.
+		t.signalStop()
+		t.drainPending()
+		close(t.doneCh)
+	}()
 
 	scanner := bufio.NewScanner(t.r)
 	// MCP messages can be substantial — tool results may include

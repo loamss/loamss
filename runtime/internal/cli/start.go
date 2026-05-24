@@ -19,6 +19,7 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy" // registers model:dummy
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"  // registers model:none
 	"github.com/loamss/loamss/runtime/internal/audit"
+	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	"github.com/loamss/loamss/runtime/internal/permission"
@@ -123,6 +124,30 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	if err := resources.Register(mcp.NewMemoryResourceProvider(memAdapter)); err != nil {
 		return fmt.Errorf("registering memory resource provider: %w", err)
 	}
+
+	// Capsule host — supervises all installed capsules. Spawns
+	// each capsule's subprocess, runs the MCP handshake, mounts
+	// every capsule's advertised tools into the runtime's tool
+	// registry under <capsule>.<tool> names. Capsule callbacks
+	// (capsule → runtime) flow through a stub handler today;
+	// permission-checked dispatch lands in the next commit.
+	capStore, err := capsule.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return fmt.Errorf("opening capsule store: %w", err)
+	}
+	defer func() { _ = capStore.Close() }()
+
+	host := capsule.NewHost(capStore, engine, auditWriter, tools, logger)
+	if _, err := host.Start(ctx); err != nil {
+		return fmt.Errorf("starting capsule host: %w", err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := host.Stop(stopCtx); err != nil {
+			logger.Warn("capsule host stop", "err", err)
+		}
+	}()
 
 	srv := server.New(server.Options{
 		Addr:      cfg.Runtime.ListenAddr,
