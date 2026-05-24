@@ -116,6 +116,13 @@ func NewTransport(r io.Reader, w io.Writer, handler TransportHandler, logger *sl
 // closes before the response arrives.
 var ErrTransportClosed = errors.New("mcp: transport closed")
 
+// Done returns a channel that closes when the transport's read
+// loop has exited — either because Close was called or the
+// underlying reader returned EOF (peer closed its end). Useful
+// for goroutines that want to react to a peer disconnecting
+// without polling.
+func (t *Transport) Done() <-chan struct{} { return t.doneCh }
+
 // Start launches the read loop in a goroutine and returns. Safe to
 // call multiple times — second and subsequent calls are no-ops.
 // The read loop runs until Close is called or the underlying

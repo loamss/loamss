@@ -3,6 +3,7 @@ package capsule
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/loamss/loamss/runtime/internal/mcp"
 )
 
 // The subprocess tests use the classic Go helper-process pattern:
@@ -34,6 +37,9 @@ import (
 //	crash:        exits with code 7 immediately.
 //	ignore-term:  traps SIGTERM and drops it; only SIGKILL stops it.
 //	stderr-noise: writes 3 lines to stderr, drains stdin, exits 0.
+//	mcp-capsule:  speaks real MCP-over-stdio using mcp.Transport.
+//	              Advertises a single "echo" tool; supports calling
+//	              back to the runtime via GO_CAPSULE_CALLBACK_METHOD.
 func TestMain(m *testing.M) {
 	switch os.Getenv("GO_CAPSULE_HELPER") {
 	case "echo":
@@ -49,6 +55,9 @@ func TestMain(m *testing.M) {
 		return
 	case "stderr-noise":
 		runStderrNoiseHelper()
+		return
+	case "mcp-capsule":
+		runMCPCapsuleHelper()
 		return
 	}
 	os.Exit(m.Run())
@@ -363,4 +372,66 @@ func (w *syncWriter) Write(p []byte) (int, error) {
 	w.c.mu.Lock()
 	defer w.c.mu.Unlock()
 	return w.c.buf.Write(p)
+}
+
+// runMCPCapsuleHelper is the in-test fake capsule. Uses the real
+// mcp.Transport to speak JSON-RPC over stdin/stdout, advertising a
+// single "echo" tool. Optionally calls back into the runtime
+// (configured via GO_CAPSULE_CALLBACK_METHOD env var) before
+// responding — exercises the bidirectional path.
+func runMCPCapsuleHelper() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var tr *mcp.Transport
+	tr = mcp.NewTransport(os.Stdin, os.Stdout, func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "initialize":
+			return map[string]any{
+				"protocolVersion": "2025-03-26",
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"serverInfo": map[string]any{
+					"name":    "test-capsule",
+					"version": "0.0.1",
+				},
+			}, nil
+		case "tools/list":
+			return map[string]any{
+				"tools": []map[string]any{
+					{
+						"name":        "echo",
+						"description": "Echo the input.",
+						"inputSchema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"text": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			}, nil
+		case "tools/call":
+			var p struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			}
+			_ = json.Unmarshal(params, &p)
+			// Optionally call back to the runtime first.
+			if cb := os.Getenv("GO_CAPSULE_CALLBACK_METHOD"); cb != "" {
+				cbCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				defer cancel()
+				_, _ = tr.Request(cbCtx, cb, map[string]any{"from": "capsule"})
+			}
+			return map[string]any{
+				"content": []map[string]any{
+					{"type": "text", "text": "echo:" + string(p.Arguments)},
+				},
+			}, nil
+		default:
+			return nil, &mcp.RPCError{Code: -32601, Message: "method not found: " + method}
+		}
+	}, logger)
+	tr.Start()
+	// Block until stdin closes; that's the canonical "session over"
+	// signal in MCP-over-stdio.
+	<-tr.Done()
+	os.Exit(0)
 }
