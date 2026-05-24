@@ -21,7 +21,7 @@ Components (planned, not yet present):
 - `internal/mcp/` — MCP surface implementation
 - `internal/permission/` — capability framework + grant store
 - `internal/audit/` — audit log writer, hash chain, hot store
-- `internal/memory/` — memory layer (entities, graph, episodic); sits *above* the memory adapter
+- `internal/memory/` — memory layer (entities, threads); sits *above* the memory adapter. Owns `memory_layer_*` tables in runtime.db and writes derived state on every Upsert.
 - `internal/adapter/` — adapter SPI + concrete implementations
   - `internal/adapter/storage/` — storage adapters (fs-encrypted, sqlite, s3, postgres)
   - `internal/adapter/memory/` — memory adapters (sqlite-vec, pgvector, chroma, qdrant)
