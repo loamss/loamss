@@ -54,6 +54,12 @@ type Filter struct {
 	SubjectID string
 	Outcomes  []Outcome
 	Limit     int // 0 means no explicit limit; the writer applies a sensible default
+
+	// Reverse asks the writer to order results by id DESC instead of
+	// ASC. Used by tail-style queries: the writer applies the limit
+	// after sorting DESC, so the result is the *last* N matching
+	// entries rather than the first.
+	Reverse bool
 }
 
 // SQLite is the hot-store Writer implementation backed by a
@@ -395,7 +401,11 @@ func buildQuery(f Filter) (string, []any) {
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY id ASC"
+	if f.Reverse {
+		q += " ORDER BY id DESC"
+	} else {
+		q += " ORDER BY id ASC"
+	}
 
 	limit := f.Limit
 	if limit <= 0 {
