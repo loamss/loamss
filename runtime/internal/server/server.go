@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/loamss/loamss/runtime/internal/audit"
+	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
@@ -61,6 +62,20 @@ type Options struct {
 	// at startup; capsule providers join later. resources/list and
 	// resources/read dispatch through this.
 	Resources *mcp.ResourceRegistry
+
+	// ConfigPath is where /console/init writes the wizard's
+	// collected configuration. Optional; when empty the handler
+	// uses config.DefaultPath() (typically ~/.loamss/config.yaml).
+	// Tests override this to land in a t.TempDir.
+	ConfigPath string
+
+	// BaseConfig is the currently-running runtime configuration.
+	// /console/init starts from a clone of this when constructing
+	// the file to persist, so the runtime/audit/log sections the
+	// wizard doesn't collect carry forward from the live daemon
+	// (rather than being reset to library defaults). Optional;
+	// when nil the handler falls back to config.Default().
+	BaseConfig *config.Config
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -74,6 +89,18 @@ type Server struct {
 	// engine + audit are non-nil iff the MCP surface is mounted.
 	engine *permission.Engine
 	audit  audit.Writer
+
+	// configPath is where /console/init persists the wizard's payload.
+	// Empty means "ask config.DefaultPath() at request time"; tests pass
+	// an explicit path to redirect writes into a temp dir.
+	configPath string
+
+	// baseConfig is the daemon's currently-running config. Used as the
+	// starting point for /console/init so the wizard preserves the
+	// runtime/audit/log sections it doesn't collect (data_dir,
+	// listen_addr, redaction_level, etc.). nil → handler falls back
+	// to config.Default().
+	baseConfig *config.Config
 }
 
 // New constructs a Server. The HTTP listener is not bound until
@@ -85,11 +112,13 @@ type Server struct {
 // Engine is provided, /pair and /mcp join the mux.
 func New(opts Options) *Server {
 	s := &Server{
-		addr:    opts.Addr,
-		logger:  opts.Logger,
-		version: opts.Version,
-		engine:  opts.Engine,
-		audit:   opts.Audit,
+		addr:       opts.Addr,
+		logger:     opts.Logger,
+		version:    opts.Version,
+		engine:     opts.Engine,
+		audit:      opts.Audit,
+		configPath: opts.ConfigPath,
+		baseConfig: opts.BaseConfig,
 	}
 
 	mux := http.NewServeMux()

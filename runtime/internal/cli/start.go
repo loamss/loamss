@@ -194,14 +194,25 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
+	// Resolve where /console/init should write the wizard's payload.
+	// Honor --config if the user gave one (so the wizard updates the
+	// file the daemon is actually reading), otherwise fall back to
+	// the default path (which itself honors LOAMSS_DATA_DIR).
+	consoleConfigPath := configPath
+	if consoleConfigPath == "" {
+		consoleConfigPath = config.DefaultPath()
+	}
+
 	srv := server.New(server.Options{
-		Addr:      cfg.Runtime.ListenAddr,
-		Logger:    logger,
-		Version:   version,
-		Engine:    engine,
-		Audit:     auditWriter,
-		Tools:     tools,
-		Resources: resources,
+		Addr:       cfg.Runtime.ListenAddr,
+		Logger:     logger,
+		Version:    version,
+		Engine:     engine,
+		Audit:      auditWriter,
+		Tools:      tools,
+		Resources:  resources,
+		ConfigPath: consoleConfigPath,
+		BaseConfig: cfg,
 	})
 
 	stop := installSignalTrap(logger)

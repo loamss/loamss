@@ -15,20 +15,38 @@ import { useWizard } from "@/lib/wizard-state";
  * next-action cards, and a quiet "or do nothing" reassurance.
  */
 export function Done() {
-  const { storage, memory, model, connect, reset, submitResult } = useWizard();
+  const {
+    storage,
+    memory,
+    model,
+    connect,
+    reset,
+    submitResult,
+    startSubmit,
+    submitting,
+  } = useWizard();
   const handedOff = submitResult?.ok ?? false;
+  const conflict = submitResult && !submitResult.ok ? submitResult.conflict : undefined;
+
+  // The eyebrow color/label tracks the actual outcome:
+  //   sage  — config written to disk
+  //   amber — needs the user to confirm overwrite
+  //   amber — generic error (network / runtime)
+  const eyebrow = handedOff
+    ? "Setup complete"
+    : conflict
+      ? "Existing config — confirm to overwrite"
+      : "Setup not yet persisted";
+  const eyebrowTone = handedOff ? "text-sage" : "text-amber";
 
   return (
     <div className="max-w-panel mx-auto pt-8 sm:pt-12">
       <div className="space-y-9">
         <div
-          className={[
-            "smallcap animate-stagger-1",
-            handedOff ? "text-sage" : "text-amber",
-          ].join(" ")}
+          className={["smallcap animate-stagger-1", eyebrowTone].join(" ")}
           style={{ opacity: 0 }}
         >
-          {handedOff ? "Setup complete" : "Setup recorded locally"} ·{" "}
+          {eyebrow} ·{" "}
           {new Date().toLocaleString("en-US", { dateStyle: "medium" })}
         </div>
 
@@ -39,7 +57,7 @@ export function Done() {
             opacity: 0,
           }}
         >
-          Your Loamss is running.
+          {handedOff ? "Your Loamss is configured." : "Your Loamss is running."}
         </h1>
 
         <p
@@ -52,21 +70,53 @@ export function Done() {
           leaves your machine until you grant something access.
         </p>
 
-        {/* Honest status of what the runtime actually did with the
-         * config the wizard sent. v0.1: the runtime accepts the POST
-         * but doesn't write the config file yet — this Note makes
-         * that explicit rather than pretending the setup persisted.
-         * Removed when the writer ships. */}
-        {submitResult && !handedOff && (
+        {/* Success — show where the file landed + the restart hint. */}
+        {handedOff && submitResult?.writtenTo && (
+          <div className="animate-stagger-3" style={{ opacity: 0 }}>
+            <Note kind="info">
+              Configuration written to{" "}
+              <span className="font-mono text-2xs">
+                {submitResult.writtenTo}
+              </span>
+              .{" "}
+              {submitResult.nextStep ??
+                "Restart the runtime to apply."}
+            </Note>
+          </div>
+        )}
+
+        {/* Conflict — an existing config blocked the write. Offer a
+         * one-click overwrite; the runtime renames the existing file
+         * to a timestamped .bak so nothing is lost without consent. */}
+        {conflict && (
+          <div className="animate-stagger-3 space-y-3" style={{ opacity: 0 }}>
+            <Note kind="warn">
+              A config file already exists at{" "}
+              <span className="font-mono text-2xs">{conflict.path}</span>.{" "}
+              {conflict.hint}
+            </Note>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => {
+                void startSubmit(true);
+              }}
+              className="text-sm text-brand hover:text-brand-deep underline underline-offset-2 disabled:opacity-50"
+            >
+              Back up the existing file and write the new one
+            </button>
+          </div>
+        )}
+
+        {/* Generic error — surface the runtime's reason verbatim. */}
+        {submitResult && !submitResult.ok && !conflict && (
           <div className="animate-stagger-3" style={{ opacity: 0 }}>
             <Note kind="warn">
-              The runtime accepted your config but the file-writer
-              isn&rsquo;t shipped yet (v0.1 stub).{" "}
-              {submitResult.reason ?? ""}{" "}
-              Your selections are preserved below — you can apply them
-              manually via{" "}
-              <span className="font-mono text-2xs">loamss config</span>{" "}
-              while the writer is in flight.
+              The runtime couldn&rsquo;t persist your selections:{" "}
+              {submitResult.reason ?? "unknown error"}.{" "}
+              Your selections are preserved below — try again, or apply
+              them by hand via{" "}
+              <span className="font-mono text-2xs">loamss config</span>.
             </Note>
           </div>
         )}

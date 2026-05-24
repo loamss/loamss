@@ -58,16 +58,23 @@ export type ConnectMode = "skip" | "gmail";
 
 /**
  * Result of the wizard's submission. Carries the payload the wizard
- * built + whether the runtime accepted it. Surfaced on the Done
- * screen so the user sees what was actually written (or, for the
- * v0.1 stub, what would have been written).
+ * built + what the runtime did with it. Surfaced on the Done screen
+ * so the user can see (a) the absolute path the config was written
+ * to, and (b) the next step to apply it.
+ *
+ * The three failure modes the Done screen renders distinctly:
+ *   - conflict   — existing config file; offer "overwrite + back up"
+ *   - error      — anything else (network, 5xx); show reason verbatim
+ *   - ok=false   — internal validation rejected the wizard payload
  */
 export interface SubmitResult {
 	ok: boolean;
 	payload: ConsoleInitPayload;
-	reason?: string; // non-empty when ok=false; explains why
-	note?: string; // optional runtime-side explanation (e.g., "stub")
 	at: string; // ISO timestamp
+	writtenTo?: string; // when ok=true
+	nextStep?: string; // when ok=true
+	conflict?: { path: string; hint: string };
+	reason?: string; // when ok=false and not a conflict
 }
 
 interface WizardState {
@@ -99,7 +106,7 @@ interface WizardState {
   setModel: (patch: Partial<ModelConfig>) => void;
   setConnect: (mode: ConnectMode) => void;
   refreshRuntimeProbe: () => Promise<void>;
-  startSubmit: () => Promise<void>;
+  startSubmit: (overwrite?: boolean) => Promise<void>;
   reset: () => void;
 }
 
@@ -175,37 +182,57 @@ export const useWizard = create<WizardState>((set, get) => ({
 
   /*
    * startSubmit POSTs the wizard's collected config to /console/init.
-   * The runtime currently runs as a stub that echoes the payload
-   * (writes_config_file=false in the capability response) — we treat
-   * any 2xx as "received" and surface the runtime's note on the
-   * Done screen.
+   * On success the runtime atomically writes ~/.loamss/config.yaml
+   * and returns the path + a "restart to apply" hint. On 409 (config
+   * file already exists) we surface the conflict so the user can
+   * re-confirm with overwrite=true.
    *
    * The progress bar is driven by the actual stages (build payload
    * → POST → settle), not a canned animation. Stages are short so
    * the user perceives a single submit click rather than five
    * sub-steps.
+   *
+   * When `overwrite` is true the runtime renames the existing file
+   * to config.yaml.<timestamp>.bak before writing — the user's
+   * previous selections survive on disk.
    */
-  startSubmit: async () => {
+  startSubmit: async (overwrite = false) => {
     set({ submitting: true, submitProgress: 0, submitResult: null });
     const state = get();
     const payload = buildPayload(state);
     set({ submitProgress: 30 });
 
-    const result = await applyConsoleInit(payload);
+    const result = await applyConsoleInit(payload, { overwrite });
     set({ submitProgress: 90 });
 
     // Brief settle so users see the bar fill rather than snap to done.
     await new Promise((r) => setTimeout(r, 220));
 
-    const submitResult: SubmitResult = {
-      ok: result.ok,
-      payload,
-      reason: result.ok ? undefined : result.reason,
-      // The runtime's v0.1 response includes a "note" field
-      // explaining the stub status; applyConsoleInit doesn't surface
-      // it yet but we can fetch on Done.
-      at: new Date().toISOString(),
-    };
+    const at = new Date().toISOString();
+    let submitResult: SubmitResult;
+    if (result.ok) {
+      submitResult = {
+        ok: true,
+        payload,
+        at,
+        writtenTo: result.writtenTo,
+        nextStep: result.nextStep,
+      };
+    } else if (result.kind === "conflict") {
+      submitResult = {
+        ok: false,
+        payload,
+        at,
+        conflict: { path: result.path, hint: result.hint },
+      };
+    } else {
+      submitResult = {
+        ok: false,
+        payload,
+        at,
+        reason: result.reason,
+      };
+    }
 
     set({
       submitting: false,

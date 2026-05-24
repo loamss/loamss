@@ -7,13 +7,13 @@
  *
  *   GET  /version  →  { version, commit, build_date }
  *   GET  /healthz  →  { status, version, ... }
- *   POST /console/init  →  { ok: true, ... }      (NEW; not yet shipped)
+ *   POST /console/init  →  { ok: true, written_to, next_step, ... }
  *
  * The first two are read-only probes the wizard runs on mount to
  * answer "is the runtime alive?" The POST endpoint is the wizard's
- * Finish action; it doesn't exist in the runtime yet — when called,
- * we currently fall through to a structured "would have written"
- * preview the user sees on the Done screen.
+ * Finish action; the runtime atomically writes the wizard's payload
+ * to a YAML config file at written_to, then asks the user to restart
+ * the daemon (next_step) to apply it.
  *
  * In production all of these would be served from the same origin
  * the console itself is served from (loamss runtime binary embeds
@@ -122,10 +122,10 @@ export async function probeOllama(
 }
 
 /**
- * The shape we'd POST to /console/init when the wizard finishes.
- * The runtime endpoint doesn't exist yet; the wizard renders this
- * payload as a "what would be written" preview on Done so the user
- * can verify and (in a future commit) apply it.
+ * The shape posted to /console/init when the wizard finishes. The
+ * runtime persists this to ~/.loamss/config.yaml (or wherever the
+ * running daemon was launched with --config). The write is atomic;
+ * a re-run hits 409 unless the user opts into overwrite.
  */
 export interface ConsoleInitPayload {
 	storage: {
@@ -147,33 +147,122 @@ export interface ConsoleInitPayload {
 }
 
 /**
- * Attempt to POST the wizard's collected config to the runtime.
- * Today the endpoint doesn't exist (returns 404 or 405); we treat
- * any non-2xx as "would-be-written" rather than a hard failure.
- * Returns true if the runtime accepted the config, false otherwise.
+ * Result of a successful POST to /console/init. The shape mirrors
+ * the runtime's response so the Done screen can show the user
+ * exactly where the config landed and what to do next.
+ */
+export interface ConsoleInitOk {
+	ok: true;
+	writtenTo: string;
+	nextStep: string;
+	capability: {
+		writesConfigFile: boolean;
+		restartsRuntime: boolean;
+		createsPairedConsole: boolean;
+		addsConfiguredSources: boolean;
+	};
+}
+
+/**
+ * Result when the runtime refuses to overwrite an existing config
+ * file. The console can offer a "back up the old file and write
+ * the new one" affordance, which retries with overwrite=true.
+ */
+export interface ConsoleInitConflict {
+	ok: false;
+	kind: "conflict";
+	path: string;
+	hint: string;
+}
+
+/**
+ * Catch-all failure (network, 4xx, 5xx other than 409). The console
+ * shows `reason` verbatim in the Done screen's warn note.
+ */
+export interface ConsoleInitError {
+	ok: false;
+	kind: "error";
+	status?: number;
+	reason: string;
+}
+
+export type ConsoleInitResult =
+	| ConsoleInitOk
+	| ConsoleInitConflict
+	| ConsoleInitError;
+
+/**
+ * POST the wizard's collected config to the runtime. The runtime
+ * atomically writes a YAML config file and returns where it landed +
+ * a "restart the runtime to apply" hint. Re-runs against an existing
+ * file return 409; pass `overwrite: true` to back up the old file
+ * and replace it.
  */
 export async function applyConsoleInit(
 	payload: ConsoleInitPayload,
-	baseUrl: string = DEFAULT_RUNTIME_URL,
-	opts: { signal?: AbortSignal } = {},
-): Promise<{ ok: boolean; reason?: string }> {
+	opts: {
+		baseUrl?: string;
+		overwrite?: boolean;
+		signal?: AbortSignal;
+	} = {},
+): Promise<ConsoleInitResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	const url = opts.overwrite
+		? `${baseUrl}/console/init?overwrite=1`
+		: `${baseUrl}/console/init`;
 	try {
-		const resp = await fetch(`${baseUrl}/console/init`, {
+		const resp = await fetch(url, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
 			signal: opts.signal,
 		});
 		if (resp.ok) {
-			return { ok: true };
+			const body = (await resp.json()) as {
+				written_to: string;
+				next_step: string;
+				capability: {
+					writes_config_file: boolean;
+					restarts_runtime: boolean;
+					creates_paired_console: boolean;
+					adds_configured_sources: boolean;
+				};
+			};
+			return {
+				ok: true,
+				writtenTo: body.written_to,
+				nextStep: body.next_step,
+				capability: {
+					writesConfigFile: body.capability.writes_config_file,
+					restartsRuntime: body.capability.restarts_runtime,
+					createsPairedConsole: body.capability.creates_paired_console,
+					addsConfiguredSources: body.capability.adds_configured_sources,
+				},
+			};
 		}
-		return {
-			ok: false,
-			reason: `Runtime returned ${resp.status} — /console/init is not yet implemented.`,
-		};
+		if (resp.status === 409) {
+			const body = (await resp.json()) as { path: string; hint: string };
+			return {
+				ok: false,
+				kind: "conflict",
+				path: body.path,
+				hint: body.hint,
+			};
+		}
+		// Best-effort error message from the response body, falling
+		// back to the status code if the body isn't JSON.
+		let reason = `Runtime returned HTTP ${resp.status}.`;
+		try {
+			const body = (await resp.json()) as { error?: string };
+			if (body.error) reason = body.error;
+		} catch {
+			/* not JSON, keep the fallback */
+		}
+		return { ok: false, kind: "error", status: resp.status, reason };
 	} catch (err) {
 		return {
 			ok: false,
+			kind: "error",
 			reason: err instanceof Error ? err.message : String(err),
 		};
 	}
