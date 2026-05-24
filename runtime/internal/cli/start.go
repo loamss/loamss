@@ -16,8 +16,9 @@ import (
 	"github.com/loamss/loamss/runtime/internal/adapter/memory"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite" // registers memory:sqlite
 	"github.com/loamss/loamss/runtime/internal/adapter/model"
-	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy" // registers model:dummy
-	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"  // registers model:none
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/anthropic" // registers model:anthropic
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy"     // registers model:dummy
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"      // registers model:none
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
@@ -88,18 +89,34 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = memAdapter.Close(context.Background()) }()
 
-	// Model adapter — used by memory.query (for embedding the query
-	// text) and, when capsules land, by organizer capsules. v0.1
-	// supports a single model adapter; the model router (multiple
-	// adapters + per-task routing rules) is future work. The user
-	// may have configured zero model adapters (cfg.Models empty),
-	// in which case we fall back to model:none — semantic memory
-	// degrades gracefully via ErrModelDisabled.
-	modelAdapter, err := openFirstModelAdapter(ctx, cfg.Models)
+	// Model adapters — multiple may be configured (e.g., Anthropic
+	// for generation + an OpenAI/voyage-style adapter for embeddings).
+	// We open every configured adapter; memory.query picks an
+	// embedding-capable one via the embedding-router below. The
+	// full model router (per-task routing rules + cost ceilings +
+	// data-class filters) is future work.
+	//
+	// When zero adapters are configured, we fall back to model:none
+	// so the runtime has a valid Adapter value to pass to memory.query
+	// — semantic memory degrades gracefully via ErrModelDisabled.
+	modelAdapters, err := openAllModelAdapters(ctx, cfg.Models)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = modelAdapter.Close(context.Background()) }()
+	defer func() {
+		for _, a := range modelAdapters {
+			_ = a.Close(context.Background())
+		}
+	}()
+
+	// embeddingAdapter is the adapter memory.query uses for
+	// query-text embedding. Selected by walking the configured
+	// adapters and picking the first whose Models() advertises the
+	// "embeddings" capability. When none match (e.g., user has only
+	// model:anthropic configured), memory.query reports the
+	// graceful-degradation isError so callers see a clear "no
+	// embedding model" message rather than a cryptic failure.
+	embeddingAdapter := pickEmbeddingAdapter(ctx, modelAdapters, logger)
 
 	// Tool registry — runtime tools register at startup. Capsule-
 	// provided tools will join the registry at install time
@@ -109,7 +126,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		mcp.NewClientInfoTool(),
 		mcp.NewAuditReadTool(auditWriter),
 		mcp.NewMemoryShowTool(memAdapter),
-		mcp.NewMemoryQueryTool(memAdapter, modelAdapter),
+		mcp.NewMemoryQueryTool(memAdapter, embeddingAdapter),
 	} {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)
@@ -190,33 +207,84 @@ func runServer(srv *server.Server, stop <-chan struct{}, shutdownTimeout time.Du
 	return <-errCh
 }
 
-// openFirstModelAdapter resolves the first configured model adapter
-// and initializes it. When the user has no model adapters configured
-// (cfg.Models empty), it falls back to model:none so the runtime
-// still has a valid Adapter value to pass to memory.query and to
-// future organizer-capsule wiring. Callers that need to know
-// whether semantic memory is "really" available can ask the
-// returned adapter via Models() (model:none returns nothing).
+// openAllModelAdapters opens every configured model adapter and
+// returns the slice in config order. When zero adapters are
+// configured, returns a single-element slice containing model:none
+// so callers always have at least one valid Adapter to consult.
 //
-// v0.1 uses only the first configured adapter — the multi-adapter
-// model router (routing rules per task, cost ceilings, data-class
-// filters) is future work. Subsequent entries in cfg.Models are
-// reserved for that router.
-func openFirstModelAdapter(ctx context.Context, configs []config.AdapterConfig) (model.Adapter, error) {
-	id := "model:none"
-	var cfgMap map[string]any
-	if len(configs) > 0 {
-		id = configs[0].Adapter
-		cfgMap = configs[0].Config
+// The full model router (per-task routing rules + cost ceilings +
+// data-class filters) is future work; for now this is a flat list
+// and selection is by capability via pickEmbeddingAdapter.
+func openAllModelAdapters(ctx context.Context, configs []config.AdapterConfig) ([]model.Adapter, error) {
+	if len(configs) == 0 {
+		a, err := model.New("model:none")
+		if err != nil {
+			return nil, fmt.Errorf("constructing model:none fallback: %w", err)
+		}
+		if err := a.Init(ctx, nil); err != nil {
+			return nil, fmt.Errorf("initializing model:none: %w", err)
+		}
+		return []model.Adapter{a}, nil
 	}
-	a, err := model.New(id)
+	out := make([]model.Adapter, 0, len(configs))
+	for i, c := range configs {
+		a, err := model.New(c.Adapter)
+		if err != nil {
+			// Close everything we already opened before returning.
+			for _, prev := range out {
+				_ = prev.Close(context.Background())
+			}
+			return nil, fmt.Errorf("constructing model adapter[%d] %q: %w", i, c.Adapter, err)
+		}
+		if err := a.Init(ctx, c.Config); err != nil {
+			for _, prev := range out {
+				_ = prev.Close(context.Background())
+			}
+			return nil, fmt.Errorf("initializing model adapter[%d] %q: %w", i, c.Adapter, err)
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// pickEmbeddingAdapter walks adapters and returns the first one
+// whose Models() advertises the "embeddings" capability. Returns
+// model:none if none match — memory.query then surfaces graceful
+// degradation via ErrModelDisabled.
+//
+// The slow part (a Models() call per adapter) runs once at startup;
+// the result is captured in memory.query's closure.
+func pickEmbeddingAdapter(ctx context.Context, adapters []model.Adapter, logger *slog.Logger) model.Adapter {
+	for _, a := range adapters {
+		ms, err := a.Models(ctx)
+		if err != nil {
+			logger.Warn("model adapter Models() failed", "err", err)
+			continue
+		}
+		for _, m := range ms {
+			for _, cap := range m.Capabilities {
+				if cap == "embeddings" {
+					logger.Info("embedding adapter selected",
+						"model", m.ID, "embedding_dim", m.EmbeddingDim)
+					return a
+				}
+			}
+		}
+	}
+	// Fallback. memory.query will report graceful degradation.
+	logger.Info("no embedding-capable model adapter configured; memory.query will degrade gracefully")
+	none, err := model.New("model:none")
 	if err != nil {
-		return nil, fmt.Errorf("constructing model adapter %q: %w", id, err)
+		// model:none is registered in init() — this can only fail
+		// if the registry got corrupted, which is unrecoverable.
+		logger.Error("model:none unavailable", "err", err)
+		return nil
 	}
-	if err := a.Init(ctx, cfgMap); err != nil {
-		return nil, fmt.Errorf("initializing model adapter %q: %w", id, err)
+	if err := none.Init(ctx, nil); err != nil {
+		logger.Error("model:none init failed", "err", err)
+		return nil
 	}
-	return a, nil
+	return none
 }
 
 // installSignalTrap returns a channel that closes when SIGINT or SIGTERM
