@@ -1,8 +1,9 @@
 # @loamss/sdk
 
-TypeScript SDK for building **Loamss capsules** — sandboxed extensions that run inside a user's Loamss runtime.
+TypeScript SDK for building on **Loamss**. Two surfaces, one package:
 
-A capsule is a subprocess the runtime spawns and talks to over MCP-over-stdio (newline-delimited JSON-RPC 2.0). This SDK handles the framing, lifecycle, manifest types, and runtime callbacks so you can write a capsule in ~30 lines instead of ~500.
+- **Capsules** — sandboxed extensions that run *inside* a user's Loamss runtime. Use `createCapsule` for these. Speaks MCP-over-stdio as a subprocess the runtime spawns.
+- **Path-B apps** — external apps that *pair with* a user's Loamss and call tools through the MCP HTTP surface. Use `pair` + `createClient` for these. Speaks MCP-over-HTTP + SSE with bearer-token auth.
 
 > **Status: v0.1, evolving.** The wire protocol tracks Loamss runtime `v0.1` (MCP protocol version `2025-03-26`). Expect breaking changes before v1.0.
 
@@ -48,6 +49,37 @@ loamss capsule install /path/to/capsule
 ```
 
 The full hello-world is in [`examples/hello-world/`](./examples/hello-world/).
+
+## Hello, world (Path-B app)
+
+```ts
+import { pair, createClient } from "@loamss/sdk";
+
+// One-time: redeem a code from `loamss client pair --name "..."`.
+const result = await pair("http://127.0.0.1:7777", "5QUK-5EPE");
+// Persist result.token + result.endpointUrl. The token is shown ONCE.
+
+// Every session afterwards:
+const client = createClient({
+  endpoint: result.endpointUrl,
+  token: result.token,
+});
+
+const tools = await client.tools.list();
+const hits = await client.tools.call("memory.query", {
+  namespace: "gmail-personal",
+  limit: 10,
+});
+
+// Subscribe to live notifications:
+for await (const ev of client.subscribe()) {
+  if (ev.event === "resources/updated") {
+    // re-render UI…
+  }
+}
+```
+
+The full client example is in [`examples/inbox-app/`](./examples/inbox-app/).
 
 ## Concepts
 
@@ -103,6 +135,8 @@ The SDK accepts a `CapsuleManifest` object in `createCapsule()` to populate the 
 
 ## API
 
+### Capsule side (you're building something that runs *inside* a user's Loamss)
+
 | Export | Purpose |
 | --- | --- |
 | `createCapsule(opts)` | Construct + start the capsule. Returns a `CapsuleHandle`. |
@@ -111,6 +145,20 @@ The SDK accepts a `CapsuleManifest` object in `createCapsule()` to populate the 
 | `RPCError(code, msg, data?)` | Throw from a handler to return a specific JSON-RPC error code. |
 | `ErrorCodes` | Constants: `PermissionDenied = -32001`, `UnknownTool = -32003`, etc. |
 | `Transport`, `processStreams()` | Lower-level transport (custom test streams, advanced use). |
+
+### Client side (you're building something that *pairs with* a user's Loamss)
+
+| Export | Purpose |
+| --- | --- |
+| `pair(endpoint, code, opts?)` | Redeem a one-time pairing code → bearer token. |
+| `createClient(opts)` | Construct an authenticated client. Returns a `LoamssClient`. |
+| `client.tools.list()`, `client.tools.call(name, args)` | Discover + invoke runtime tools. |
+| `client.resources.list()`, `client.resources.read(uri)` | Read runtime resources. |
+| `client.subscribe()` | AsyncIterable of SSE events from the runtime. |
+| `client.call(method, params)` | Low-level escape hatch for arbitrary JSON-RPC methods. |
+| `AuthorizationError` | Thrown on HTTP 401 (token revoked/expired). |
+| `ApprovalRequiredError` | Thrown when a tool needs consequential-action approval. Carries `approvalId` + `capability`. |
+| `parseSSE(stream)` | Low-level SSE parser (`createClient.subscribe()` wraps this). |
 
 ## Development
 

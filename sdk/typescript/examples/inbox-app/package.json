@@ -1,0 +1,14 @@
+{
+  "name": "loamss-example-inbox-app",
+  "version": "0.1.0",
+  "description": "Minimal Path-B app — pairs with a user's Loamss, lists tools, queries memory.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "pair": "bun src/pair.ts",
+    "run": "bun src/run.ts"
+  },
+  "dependencies": {
+    "@loamss/sdk": "workspace:*"
+  }
+}

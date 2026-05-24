@@ -81,3 +81,30 @@ export {
 	type TransportOptions,
 	type TransportStreams,
 } from "./transport.js";
+
+// ----- Path-B app surface: MCP client over HTTP+SSE -----------------
+
+// Pairing helper
+export {
+	pair,
+	type PairedClient,
+	type PairOptions,
+	type PairResult,
+} from "./pair.js";
+
+// MCP client (createClient → tools/list, tools/call, resources/*, SSE)
+export {
+	createClient,
+	type CallOptions,
+	type ClientOptions,
+	type LoamssClient,
+} from "./client.js";
+
+// Client-specific errors
+export {
+	ApprovalRequiredError,
+	AuthorizationError,
+} from "./errors.js";
+
+// SSE async iterator (low-level; createClient.subscribe() wraps this)
+export { parseSSE, type SSEEvent } from "./sse.js";
