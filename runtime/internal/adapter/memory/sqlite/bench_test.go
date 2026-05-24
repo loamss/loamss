@@ -16,6 +16,7 @@ import (
 // should swap to memory:sqlite-vec for indexed search.
 //
 // Run with:
+//
 //	go test ./internal/adapter/memory/sqlite/ -bench=BenchmarkSearch -benchtime=1x -run=^$
 //
 // 1x runs each size exactly once (the loop body is the meaningful

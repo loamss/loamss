@@ -102,7 +102,7 @@ func main() {
 				// responses (RPC error, missing fields) count as
 				// errors so the qps headline doesn't lie.
 				var probe struct {
-					Error *struct{} `json:"error"`
+					Error  *struct{}      `json:"error"`
 					Result map[string]any `json:"result"`
 				}
 				if err := json.Unmarshal(bodyBytes, &probe); err != nil {
