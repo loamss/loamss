@@ -22,16 +22,31 @@
  * the runtime's URL directly.
  */
 
-// Default runtime base URL. In production (console served from the
-// runtime), this resolves to the same origin. In dev it points at
-// the runtime's known listen port.
+// Default runtime base URL.
+//
+// In production the console is embedded inside the runtime binary
+// and served from the same origin — every fetch resolves against
+// window.location with no cross-origin hop.
+//
+// In dev (`bun dev` on :3000) the console runs as a separate
+// process and has to address the runtime explicitly. We keep a
+// small dev-mode hardcoded fallback for that case so contributors
+// can iterate on the UI without rebuilding the binary.
+//
+// SSR (no window) defaults to 127.0.0.1:7777 — Next's static
+// export only invokes module code in the browser for our app, but
+// the guard is here because `output: "export"` still runs the
+// module during the build step.
 export const DEFAULT_RUNTIME_URL = (() => {
 	if (typeof window === "undefined") return "http://127.0.0.1:7777";
 	const { protocol, hostname, port } = window.location;
-	// Dev: console on 3000, runtime on 7777.
-	if (port === "3000") return "http://127.0.0.1:7777";
-	// Same-origin (production): use whatever the console was served from.
-	return `${protocol}//${hostname}${port ? `:${port}` : ""}`;
+	// Same-origin path: the production-embedded console and any
+	// future production deployments both fall through here.
+	if (port !== "3000") {
+		return `${protocol}//${hostname}${port ? `:${port}` : ""}`;
+	}
+	// Dev fallback: console on :3000, runtime on :7777.
+	return "http://127.0.0.1:7777";
 })();
 
 /**

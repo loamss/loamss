@@ -90,17 +90,41 @@ export function WizardShell({
       </main>
 
       {/* Footer — just a small reassurance + the project link.
-       * Visually anchored at the bottom but never feels heavy. */}
+       * Visually anchored at the bottom but never feels heavy.
+       * The right-side annotation reflects where the user is
+       * actually pointed (their browser's window.location), not a
+       * baked-in port — when the runtime is bound to a non-default
+       * address this label has to match. */}
       <footer className="px-6 sm:px-10 py-6 flex flex-wrap items-center justify-between gap-3 text-xs text-ink-quiet font-sans">
         <span>
           The runtime is running on your machine. Nothing leaves until
           you grant something.
         </span>
         <span className="font-mono text-2xs">
-          v0.1 prototype · localhost:7777
+          v0.1 prototype · <RuntimeOrigin />
         </span>
       </footer>
     </div>
+  );
+}
+
+/**
+ * RuntimeOrigin renders the host:port the user's browser is
+ * pointed at — derived from window.location so it reflects
+ * whatever bind address the runtime was launched with. On SSR
+ * (during static export build) we fall back to the canonical
+ * default; the client takes over once hydration completes.
+ */
+function RuntimeOrigin() {
+  if (typeof window === "undefined") return <>localhost:7777</>;
+  const { hostname, port } = window.location;
+  // Hide the port when it's the default 80/443 — same UX as a
+  // browser address bar.
+  if (!port || port === "80" || port === "443") return <>{hostname}</>;
+  return (
+    <>
+      {hostname}:{port}
+    </>
   );
 }
 

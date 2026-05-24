@@ -46,6 +46,9 @@ console-build:
 	@rm -rf $(CONSOLE_DST)
 	@mkdir -p $(CONSOLE_DST)
 	@cp -R $(CONSOLE_SRC)/out/. $(CONSOLE_DST)/
+	@# Re-create the .gitkeep marker — the Next.js export doesn't
+	@# carry one and git refuses to track empty directories.
+	@touch $(CONSOLE_DST)/.gitkeep
 
 ## console-clean: restore the dist/ placeholder so future Go-only
 ##                builds get the "console not built" landing instead
