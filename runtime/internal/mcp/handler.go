@@ -19,6 +19,7 @@ type Deps struct {
 	Engine        *permission.Engine
 	Audit         audit.Writer
 	Tools         *Registry
+	Resources     *ResourceRegistry
 	Logger        *slog.Logger
 	ServerName    string // e.g. "loamss"
 	ServerVersion string // build version, surfaced in initialize result
@@ -44,6 +45,9 @@ func NewHandler(d Deps) *Handler {
 	}
 	if d.Tools == nil {
 		panic("mcp: NewHandler: Tools registry is required")
+	}
+	if d.Resources == nil {
+		panic("mcp: NewHandler: Resources registry is required")
 	}
 	if d.Logger == nil {
 		panic("mcp: NewHandler: Logger is required")
@@ -137,7 +141,12 @@ func (h *Handler) dispatch(r *http.Request, req Request) Response {
 		return h.handleToolsList(r, req)
 	case "tools/call":
 		return h.handleToolsCall(r, req)
-	// resources/list, resources/read land in commit 3.
+	case "resources/list":
+		return h.handleResourcesList(r, req)
+	case "resources/templates/list":
+		return h.handleResourcesTemplatesList(r, req)
+	case "resources/read":
+		return h.handleResourcesRead(r, req)
 	default:
 		return methodNotFoundResponse(req.ID, req.Method)
 	}

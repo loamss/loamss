@@ -55,6 +55,12 @@ type Options struct {
 	// constructed so the MCP surface can advertise the (empty) tool
 	// set in initialize.
 	Tools *mcp.Registry
+
+	// Resources is the MCP resource provider registry. Required
+	// when Engine is set. The runtime registers a memory provider
+	// at startup; capsule providers join later. resources/list and
+	// resources/read dispatch through this.
+	Resources *mcp.ResourceRegistry
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -102,10 +108,14 @@ func New(opts Options) *Server {
 		if opts.Tools == nil {
 			panic("server: Options.Tools must be non-nil when Engine is non-nil")
 		}
+		if opts.Resources == nil {
+			panic("server: Options.Resources must be non-nil when Engine is non-nil")
+		}
 		mcpHandler := mcp.NewHandler(mcp.Deps{
 			Engine:        opts.Engine,
 			Audit:         opts.Audit,
 			Tools:         opts.Tools,
+			Resources:     opts.Resources,
 			Logger:        opts.Logger,
 			ServerName:    "loamss",
 			ServerVersion: opts.Version,

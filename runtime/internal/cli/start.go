@@ -97,13 +97,23 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Resource registry — runtime providers register at startup;
+	// capsule providers join at install. memory:// is the one
+	// default; storage://, capsule-specific schemes (e.g.,
+	// vibez.content://) land as those subsystems are wired.
+	resources := mcp.NewResourceRegistry()
+	if err := resources.Register(mcp.NewMemoryResourceProvider(memAdapter)); err != nil {
+		return fmt.Errorf("registering memory resource provider: %w", err)
+	}
+
 	srv := server.New(server.Options{
-		Addr:    cfg.Runtime.ListenAddr,
-		Logger:  logger,
-		Version: version,
-		Engine:  engine,
-		Audit:   auditWriter,
-		Tools:   tools,
+		Addr:      cfg.Runtime.ListenAddr,
+		Logger:    logger,
+		Version:   version,
+		Engine:    engine,
+		Audit:     auditWriter,
+		Tools:     tools,
+		Resources: resources,
 	})
 
 	stop := installSignalTrap(logger)

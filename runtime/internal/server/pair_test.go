@@ -21,11 +21,12 @@ import (
 // permission store, audit writer, engine, tool registry, plus
 // teardown.
 type fullDeps struct {
-	store  *permission.Store
-	audit  *audit.SQLite
-	engine *permission.Engine
-	tools  *mcp.Registry
-	dir    string
+	store     *permission.Store
+	audit     *audit.SQLite
+	engine    *permission.Engine
+	tools     *mcp.Registry
+	resources *mcp.ResourceRegistry
+	dir       string
 }
 
 func newFullDeps(t *testing.T) *fullDeps {
@@ -46,11 +47,12 @@ func newFullDeps(t *testing.T) *fullDeps {
 		_ = w.Close(context.Background())
 	})
 	return &fullDeps{
-		store:  store,
-		audit:  w,
-		engine: permission.NewEngine(store, w),
-		tools:  mcp.NewRegistry(),
-		dir:    dir,
+		store:     store,
+		audit:     w,
+		engine:    permission.NewEngine(store, w),
+		tools:     mcp.NewRegistry(),
+		resources: mcp.NewResourceRegistry(),
+		dir:       dir,
 	}
 }
 
@@ -63,12 +65,13 @@ func startFullServer(t *testing.T, d *fullDeps) (string, func()) {
 		t.Fatalf("net.Listen: %v", err)
 	}
 	srv := New(Options{
-		Addr:    l.Addr().String(),
-		Logger:  silentLogger(),
-		Version: "v0.1-test",
-		Engine:  d.engine,
-		Audit:   d.audit,
-		Tools:   d.tools,
+		Addr:      l.Addr().String(),
+		Logger:    silentLogger(),
+		Version:   "v0.1-test",
+		Engine:    d.engine,
+		Audit:     d.audit,
+		Tools:     d.tools,
+		Resources: d.resources,
 	})
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(l) }()

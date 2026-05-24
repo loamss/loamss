@@ -63,6 +63,7 @@ func newTestHandler(t *testing.T) *testFixture {
 		Engine:        engine,
 		Audit:         w,
 		Tools:         NewRegistry(),
+		Resources:     NewResourceRegistry(),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ServerName:    "loamss",
 		ServerVersion: "v0.1-test",
