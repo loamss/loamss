@@ -127,6 +127,16 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 	// on this host.
 	cfg := buildConfigFromConsoleInit(s.baseConfig, req)
 
+	// Validate at the request boundary so bad input surfaces as a
+	// 400 (it's the client's fault) rather than the 500 that
+	// WriteAtomic's defense-in-depth check would otherwise produce.
+	// WriteAtomic still re-validates so file-on-disk callers stay
+	// covered.
+	if err := config.Validate(cfg); err != nil {
+		writeJSONError(w, "invalid configuration: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	target := s.configPath
 	if target == "" {
 		target = config.DefaultPath()

@@ -93,6 +93,14 @@ func WriteAtomic(path string, cfg *Config, opts WriteOptions) error {
 
 	// If the user asked for a backup and a file already exists,
 	// rename it aside before we write the new one.
+	//
+	// Rapid re-runs of the wizard can land two overwrites within the
+	// same UTC second, which would compute the same backup filename
+	// twice. Because os.Rename silently replaces an existing target
+	// on POSIX, the naive implementation would lose the older
+	// backup. We instead resolve a unique target by appending "-N"
+	// when the computed path collides — preserving the user-visible
+	// invariant that every overwrite leaves an accessible backup.
 	if opts.Overwrite && opts.BackupSuffix != "" {
 		if _, err := os.Stat(abs); err == nil {
 			// Replace any "%s" token in the suffix with a UTC
@@ -103,7 +111,8 @@ func WriteAtomic(path string, cfg *Config, opts WriteOptions) error {
 				"%s",
 				time.Now().UTC().Format("20060102-150405"),
 			)
-			if err := os.Rename(abs, abs+suffix); err != nil {
+			backupPath := uniqueBackupPath(abs + suffix)
+			if err := os.Rename(abs, backupPath); err != nil {
 				return fmt.Errorf("config: backing up old file: %w", err)
 			}
 		}
@@ -150,6 +159,46 @@ func WriteAtomic(path string, cfg *Config, opts WriteOptions) error {
 		return fmt.Errorf("config: renaming into place: %w", err)
 	}
 	return nil
+}
+
+// uniqueBackupPath returns `desired` if no file exists there, or
+// the first available "<desired-without-final-ext>-<N><ext>" name
+// otherwise. Used so two backups computed in the same UTC second
+// don't clobber each other.
+//
+// Examples (when config.yaml.20260524-231631.bak already exists):
+//
+//	uniqueBackupPath("/d/config.yaml.20260524-231631.bak")
+//	  → "/d/config.yaml.20260524-231631-2.bak"
+//
+// We loop until we find a free slot; the bound is high enough that
+// realistic overwrite rates (clicks per second from a single user)
+// can never hit it.
+func uniqueBackupPath(desired string) string {
+	if _, err := os.Stat(desired); errors.Is(err, os.ErrNotExist) {
+		return desired
+	}
+	// Split into base + final extension so the disambiguator lands
+	// between the timestamp and the trailing ".bak" (or whatever
+	// extension the suffix ended with): config.yaml.TS-2.bak rather
+	// than config.yaml.TS.bak-2.
+	ext := filepath.Ext(desired)
+	stem := strings.TrimSuffix(desired, ext)
+	// Cap at 10_000 to avoid an unbounded loop in pathological
+	// cases (e.g., the directory already has every disambiguator
+	// pre-filled). 10k same-second overwrites of one config file is
+	// well past anything a user could produce.
+	for n := 2; n < 10_000; n++ {
+		candidate := fmt.Sprintf("%s-%d%s", stem, n, ext)
+		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+			return candidate
+		}
+	}
+	// Last-resort fallback: append a nanosecond suffix. Ugly but
+	// guaranteed unique to within ~1ns. Reaching this branch
+	// requires 10k pre-existing collisions which we treat as a
+	// degenerate filesystem state worth surfacing in the filename.
+	return fmt.Sprintf("%s-ns%d%s", stem, time.Now().UnixNano(), ext)
 }
 
 // DefaultPath returns where Load would look for a config file

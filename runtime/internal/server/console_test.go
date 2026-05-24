@@ -271,10 +271,10 @@ func TestConsoleInit_RejectsInvalidAdapter(t *testing.T) {
 		t.Fatalf("POST: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusInternalServerError {
-		// (We surface validation as 500 today; if we add a structured
-		// validation-error path later this expectation moves.)
-		t.Errorf("status %d, want 500 for invalid adapter", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		// Validation runs at the request boundary, so bad input is
+		// the client's fault → 400.
+		t.Errorf("status %d, want 400 for invalid adapter", resp.StatusCode)
 	}
 	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
 		t.Errorf("invalid payload produced a file on disk: stat err=%v", err)

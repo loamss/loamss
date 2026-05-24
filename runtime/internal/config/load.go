@@ -119,8 +119,15 @@ func applyEnv(cfg *Config) {
 	}
 }
 
-// validate enforces top-level schema invariants. Adapter-specific config
+// Validate enforces top-level schema invariants. Adapter-specific config
 // validation is the adapter's job (at adapter Init time), not the loader's.
+//
+// Exposed (capitalised) so callers that construct a Config in memory
+// — e.g., the /console/init handler taking a wizard payload — can
+// reject bad input at the request boundary with a 400, rather than
+// discovering it inside WriteAtomic and bouncing it as a 500.
+func Validate(cfg *Config) error { return validate(cfg) }
+
 func validate(cfg *Config) error {
 	if cfg.Runtime.DataDir == "" {
 		return errors.New("runtime.data_dir must be set")
