@@ -177,6 +177,30 @@ func TestSourceShow_JSON(t *testing.T) {
 	}
 }
 
+func TestSourceShow_MasksSensitiveConfig(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := runSourceCmd(t, dir, "", "add", "source:fake",
+		"--name", "mask1",
+		"--config", "client_secret=hush",
+		"--config", "label=INBOX"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	out, err := runSourceCmd(t, dir, "", "show", "mask1")
+	if err != nil {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "(set, hidden)") {
+		t.Errorf("expected '(set, hidden)' marker in human-formatted output, got:\n%s", out)
+	}
+	if strings.Contains(out, "hush") {
+		t.Errorf("plaintext secret leaked into human-formatted output:\n%s", out)
+	}
+	// Non-sensitive keys should still render verbatim.
+	if !strings.Contains(out, "label: INBOX") {
+		t.Errorf("expected non-sensitive config to render verbatim, got:\n%s", out)
+	}
+}
+
 func TestSourceAuthenticate_CodePaste(t *testing.T) {
 	dir := t.TempDir()
 	// Reset shared fake state — earlier tests may have flipped AuthComplete.

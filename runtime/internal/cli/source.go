@@ -466,6 +466,7 @@ func emitSources(w io.Writer, list []source.Configured, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		for _, c := range list {
+			c.Config = maskedConfig(c.Config)
 			if err := enc.Encode(c); err != nil {
 				return err
 			}
@@ -506,7 +507,7 @@ func renderSourceDetail(w io.Writer, c *source.Configured) {
 	if len(c.Config) > 0 {
 		_, _ = fmt.Fprintln(w, "Config:")
 		for _, k := range sortedKeys(c.Config) {
-			_, _ = fmt.Fprintf(w, "  %s: %v\n", k, c.Config[k])
+			_, _ = fmt.Fprintf(w, "  %s: %v\n", k, displayConfigValue(k, c.Config[k]))
 		}
 	}
 	if len(c.LastSyncSummary) > 0 {
@@ -515,6 +516,57 @@ func renderSourceDetail(w io.Writer, c *source.Configured) {
 			_, _ = fmt.Fprintf(w, "  %s: %v\n", k, c.LastSyncSummary[k])
 		}
 	}
+}
+
+// sensitiveConfigKeyParts identify config keys whose values should never
+// be rendered to a terminal or to the JSONL list output. The match is a
+// case-insensitive substring on the key, so "client_secret",
+// "api_key", "OAuth-Token", etc. all hit.
+var sensitiveConfigKeyParts = []string{"secret", "password", "token", "api_key", "credential"}
+
+func isSensitiveConfigKey(key string) bool {
+	lk := strings.ToLower(key)
+	for _, part := range sensitiveConfigKeyParts {
+		if strings.Contains(lk, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// displayConfigValue returns the value to print for a config entry,
+// substituting "(set, hidden)" / "(unset)" for sensitive keys. Use it
+// for human-readable and list-JSONL output; the per-source `show --json`
+// path stays verbatim because it is an opted-in programmatic surface.
+func displayConfigValue(key string, v any) any {
+	if !isSensitiveConfigKey(key) {
+		return v
+	}
+	if isEmptyConfigValue(v) {
+		return "(unset)"
+	}
+	return "(set, hidden)"
+}
+
+func isEmptyConfigValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+		return true
+	}
+	return false
+}
+
+func maskedConfig(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = displayConfigValue(k, v)
+	}
+	return out
 }
 
 // --- deps + helpers ----------------------------------------------------
