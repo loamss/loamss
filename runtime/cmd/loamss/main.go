@@ -8,6 +8,9 @@ import (
 	"os"
 
 	"github.com/loamss/loamss/runtime/internal/cli"
+
+	// Built-in adapters register themselves via init().
+	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted"
 )
 
 func main() {
