@@ -27,6 +27,14 @@ desktop.ini
 node_modules/
 .pnp.*
 dist/
+# Exception: the runtime embeds the Next.js console export via
+# //go:embed dist. The dist/ contents are build-output and not
+# committed, but the directory itself (marked by a .gitkeep) must
+# exist in git so fresh checkouts can compile without first
+# running the console build pipeline.
+!runtime/internal/console/dist/
+runtime/internal/console/dist/*
+!runtime/internal/console/dist/.gitkeep
 build/
 .next/
 .turbo/

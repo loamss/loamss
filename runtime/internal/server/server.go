@@ -24,6 +24,7 @@ import (
 
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/console"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
@@ -160,6 +161,18 @@ func New(opts Options) *Server {
 		})
 		mux.Handle("/mcp", s.bearerAuthMiddleware(s.attachMCPPrincipal(mcpHandler)))
 	}
+
+	// Embedded console — registered LAST so it acts as the catch-all
+	// for paths the API mux didn't claim. Go's http.ServeMux uses
+	// longest-pattern-wins, so explicit routes like `GET /healthz`
+	// and `POST /console/init` still win; "/" only handles what
+	// nothing else matched.
+	//
+	// This is the architectural win: same-origin everything. The
+	// wizard fetches /console/init from the same host it was served
+	// from; no CORS preflight, no dev-vs-prod URL branching, no
+	// version-skew between console and runtime.
+	mux.Handle("/", console.Handler())
 
 	s.httpSrv = &http.Server{
 		Addr:    opts.Addr,
