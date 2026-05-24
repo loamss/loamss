@@ -42,16 +42,14 @@ const (
 func Load(path string) (*Config, error) {
 	cfg := Default()
 
-	resolvedPath, explicit, err := resolvePath(path)
-	if err != nil {
-		return nil, err
-	}
+	resolvedPath, explicit := resolvePath(path)
 
 	if resolvedPath != "" {
 		if err := mergeFile(cfg, resolvedPath); err != nil {
-			if errors.Is(err, os.ErrNotExist) && !explicit {
-				// Default-location file simply doesn't exist; that's fine.
-			} else {
+			// Default-location file is allowed to be absent (we just keep
+			// defaults). Any other error — including an explicit path that
+			// doesn't exist — propagates.
+			if !errors.Is(err, os.ErrNotExist) || explicit {
 				return nil, fmt.Errorf("reading config file %s: %w", resolvedPath, err)
 			}
 		}
@@ -69,19 +67,19 @@ func Load(path string) (*Config, error) {
 // resolvePath returns the config file path to load and whether it was
 // explicitly requested (so a missing file is an error rather than silently
 // falling back to defaults).
-func resolvePath(arg string) (path string, explicit bool, err error) {
+func resolvePath(arg string) (path string, explicit bool) {
 	if arg != "" {
-		return arg, true, nil
+		return arg, true
 	}
 	if v := os.Getenv(envConfigPath); v != "" {
-		return v, true, nil
+		return v, true
 	}
 	// Default location depends on the (possibly env-overridden) data dir.
 	dataDir := defaultDataDir()
 	if v := os.Getenv(envDataDir); v != "" {
 		dataDir = v
 	}
-	return filepath.Join(dataDir, "config.yaml"), false, nil
+	return filepath.Join(dataDir, "config.yaml"), false
 }
 
 // mergeFile reads YAML from path and unmarshals into cfg. The unmarshal
