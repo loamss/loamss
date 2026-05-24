@@ -160,25 +160,79 @@ func (w *SQLite) loadHeadHash(ctx context.Context) error {
 // --- Append ------------------------------------------------------------
 
 // Append validates the supplied entry, assigns id/timestamp/prev_hash,
-// computes the chained hash, and persists the row. Returns the
-// fully-populated Entry on success.
+// computes the chained hash, and persists the row atomically.
+// Returns the fully-populated Entry on success.
+//
+// Concurrency: Append must serialize across processes because the
+// prev_hash field couples each row to the prior row's hash. The
+// pattern is read-then-write — read the current head hash, compute
+// the new hash from it, INSERT. In-process serialization via w.mu
+// is necessary but not sufficient: two daemons (or a daemon + a CLI
+// invocation) writing to the same audit.db are separate processes
+// with separate mutexes.
+//
+// The fix is a SQLite write-lock-protected read-then-write. We
+// acquire a dedicated connection from the pool, issue
+// `BEGIN IMMEDIATE`, re-read the head hash from the DB, INSERT, and
+// COMMIT. BEGIN IMMEDIATE acquires SQLite's reserved (write) lock
+// at the start of the transaction; concurrent IMMEDIATE writers
+// queue on it (busy_timeout=5s handles brief contention). The
+// in-memory w.lastHash is updated for read-side queries but is no
+// longer authoritative on the write path.
+//
+// Verified by TestAppend_ConcurrentWritersChainIntact, which spawns
+// 50 concurrent appends across goroutines and asserts the chain
+// verifies end-to-end.
 func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 
+	// Hold the in-process mutex to serialize with our own goroutines
+	// before contending for SQLite's write lock — saves wasted lock
+	// trips when many goroutines append in the same process.
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	conn, err := w.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("audit: getting connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, fmt.Errorf("audit: begin immediate: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	// Re-read the authoritative head hash inside the write-locked
+	// transaction. Concurrent writers cannot have changed it
+	// underneath us because BEGIN IMMEDIATE blocks them.
+	var head sql.NullString
+	err = conn.QueryRowContext(ctx,
+		`SELECT hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
+	).Scan(&head)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("audit: reading head in tx: %w", err)
+	}
+	prevHash := GenesisHash
+	if head.Valid && head.String != "" {
+		prevHash = head.String
+	}
 
 	now := time.Now().UTC()
 	id, err := w.nextID(now)
 	if err != nil {
 		return nil, err
 	}
-
 	e.ID = id
 	e.Timestamp = now
-	e.PrevHash = w.lastHash
+	e.PrevHash = prevHash
 
 	hash, err := computeHash(e.PrevHash, e)
 	if err != nil {
@@ -200,7 +254,7 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 		subjID = sql.NullString{String: e.Subject.ID, Valid: true}
 	}
 
-	if _, err := w.db.ExecContext(ctx, `
+	if _, err := conn.ExecContext(ctx, `
         INSERT INTO audit_entries (
             id, timestamp, type, actor_kind, actor_id,
             subject_kind, subject_id, outcome,
@@ -215,6 +269,13 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 		return nil, fmt.Errorf("audit: insert: %w", err)
 	}
 
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("audit: commit: %w", err)
+	}
+	committed = true
+
+	// Cache the new head for fast in-process reads. Other processes
+	// re-read on their next append, so a stale cache here is harmless.
 	w.lastHash = e.Hash
 	return &e, nil
 }

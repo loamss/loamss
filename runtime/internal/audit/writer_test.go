@@ -381,6 +381,58 @@ func TestConcurrent_AppendsAreSerializedAndChained(t *testing.T) {
 	}
 }
 
+// TestConcurrent_TwoWritersSameFileChainIntact reproduces the
+// daemon-plus-CLI concurrency case: two distinct SQLite writers
+// open the same audit.db, both append entries, and the chain must
+// still verify. The earlier TestConcurrent_AppendsAreSerializedAndChained
+// only exercises one writer instance — its in-process mutex masks the
+// cross-process / cross-instance bug the smoke test surfaced.
+func TestConcurrent_TwoWritersSameFileChainIntact(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.db")
+	ctx := context.Background()
+
+	wA, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("open A: %v", err)
+	}
+	defer wA.Close(ctx)
+	wB, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("open B: %v", err)
+	}
+	defer wB.Close(ctx)
+
+	const each = 25
+	var wg sync.WaitGroup
+	for _, w := range []*SQLite{wA, wB} {
+		wg.Add(1)
+		go func(w *SQLite) {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				if _, err := w.Append(ctx, basicEntry()); err != nil {
+					t.Errorf("Append from %s: %v", w.path, err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	// Either writer can verify the chain end-to-end.
+	r, err := wA.Verify(ctx)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !r.Valid {
+		t.Errorf("chain broken under cross-instance concurrency: %+v", r)
+	}
+	all, _ := wA.Query(ctx, Filter{Limit: 1000})
+	if len(all) != 2*each {
+		t.Errorf("got %d entries, want %d", len(all), 2*each)
+	}
+}
+
 func TestSentinelValidationErrors(t *testing.T) {
 	// Direct call to Validate without going through Append, for
 	// completeness.
