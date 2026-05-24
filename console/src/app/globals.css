@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Global stylesheet for the Loamss console.
+ *
+ * Bias toward keeping styles in Tailwind utility classes; this file
+ * is for things that don't translate (custom selection, focus ring
+ * defaults, the paper texture, scrollbar treatments).
+ */
+
+@layer base {
+  :root {
+    /*
+     * The paper texture is a very subtle radial gradient + a grain
+     * pseudo-pattern, applied to <body> at very low opacity. Just
+     * enough to break the flat-white "screen" feel without ever
+     * being noticeable.
+     */
+    --paper-warmth: radial-gradient(
+        ellipse at top,
+        rgba(246, 235, 211, 0.5) 0%,
+        rgba(246, 242, 234, 0) 60%
+      ),
+      radial-gradient(
+        ellipse at bottom right,
+        rgba(237, 231, 217, 0.6) 0%,
+        rgba(246, 242, 234, 0) 50%
+      );
+  }
+
+  html {
+    /* Smoother scroll between wizard steps if any anchor jumps. */
+    scroll-behavior: smooth;
+  }
+
+  body {
+    /* Paper warmth is layered behind the bg-paper Tailwind class. */
+    background-image: var(--paper-warmth);
+    background-attachment: fixed;
+    /* Slight grain overlay — barely there, but breaks the screen
+     * flatness. Implemented as an SVG data URL with low opacity. */
+    background-color: #f6f2ea;
+  }
+
+  /* Body has a very low-opacity grain. Pseudo-element so the
+   * Tailwind bg-paper class still applies on top. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4 0 0 0 0 0.36 0 0 0 0 0.3 0 0 0 0.035 0'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>");
+    opacity: 0.6;
+    mix-blend-mode: multiply;
+  }
+
+  /* Make sure main content sits above the grain. */
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Focus rings — brand-tinted, never the harsh default blue. */
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(31, 61, 44, 0.18);
+    border-radius: 4px;
+  }
+
+  /* Scrollbar — narrow and unobtrusive. Webkit only; Firefox does
+   * its own thing and that's fine. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(27, 24, 20, 0.12);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(27, 24, 20, 0.22);
+    background-clip: padding-box;
+  }
+
+  /* Editorial defaults for typography that escapes Tailwind classes
+   * (e.g., dynamically inserted help text). */
+  strong {
+    font-weight: 500;
+  }
+
+  /* Tabular numbers for any number that lives next to alignment. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Small caps label — used for section headers and step labels
+   * across the console. Uppercase, tracked-out, modest. */
+  .smallcap {
+    font-family: var(--font-plex-sans);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: #5a554c;
+  }
+
+  /* Hairline rule — 1px, ink-hairline color. Use instead of <hr>
+   * for finer control. */
+  .hairline {
+    height: 1px;
+    background: #d6cfc0;
+  }
+
+  /* For copying paths/IDs — gives them a subtle bracketing. */
+  .id-chip {
+    font-family: var(--font-plex-mono);
+    font-size: 0.8125rem;
+    color: #5a554c;
+    background: rgba(237, 231, 217, 0.6);
+    border: 1px solid rgba(214, 207, 192, 0.5);
+    border-radius: 3px;
+    padding: 0.0625rem 0.375rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The page-turn motion: a fade + minimal lift. Subtle enough that
+   * it reads as "the content settled" rather than "an animation
+   * happened." */
+  .page-enter {
+    animation: fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}

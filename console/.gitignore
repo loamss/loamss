@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/*
+
+# Build output
+.next/
+out/
+build/
+dist/
+
+# Runtime
+*.log
+bun.lock
+.env*.local
+
+# OS / editor
+.DS_Store
+*.tsbuildinfo
+.idea/
+.vscode/
+
+# Bun-specific lockfiles — we ship one, but keep the alternate forms out
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
