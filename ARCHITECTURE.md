@@ -127,10 +127,25 @@ The user-facing web UI. Runs as a static site against the runtime's local API. N
 - Sources (data ingestion adapters: list, add, sync, OAuth lifecycle)
 - Capsules (installed, available, install/uninstall, configure, permission slips)
 - Clients (paired external MCP clients: list, pair, revoke, scope edit)
-- Permissions (all grants across capsules and clients)
+- Permissions (all grants across capsules and clients — issue, modify scopes, set expiry, revoke, review the slip)
 - Audit log (filterable, searchable, exportable)
 - Memory browser (people, projects, topics; query, correct, forget)
 - Runtime status (health, version, logs)
+
+The console is **opt-in via config**. The runtime can be deployed two ways:
+
+- **Headless** (default in v0.1): CLI + MCP surface only. Permission management uses `loamss grant list/show/revoke` and the pairing flow.
+- **Console-enabled**: the runtime also serves the console on its listen address, providing the same operations through a GUI. The same underlying grant store, audit log, and adapters serve both surfaces.
+
+The toggle lives in the config file (see `adapter-interface.md`):
+
+```yaml
+console:
+  enabled: false       # default; set true to serve the console
+  path: /console       # URL prefix where the console mounts
+```
+
+When disabled, the console assets are not served and any HTTP request to the console path returns 404. Users who prefer to manage the runtime entirely via the CLI never run anything else; users who want a GUI flip the flag.
 
 ## Capsules
 

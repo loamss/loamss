@@ -294,6 +294,15 @@ routing:
     prefer: llama-3.3
   - data_class: health
     forbidden_models: [hosted]
+
+# Console (optional) — opt-in web UI for managing grants, the audit
+# log, the memory browser, capsule library, and connected clients.
+# Disabled by default; the runtime is fully usable headless via the
+# `loamss` CLI. Enable to serve the console at the configured path.
+# See ARCHITECTURE.md §The Console.
+console:
+  enabled: false        # set true to serve the console
+  path: /console        # URL prefix where the console mounts
 ```
 
 Switching storage adapters is the most expensive operation: the runtime offers `loamss storage migrate <new-adapter>` to copy data through, but the user is expected to plan and validate. Switching memory or model adapters is cheap.

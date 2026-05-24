@@ -171,6 +171,15 @@ audit:
 log:
   level: info      # debug | info | warn | error
   format: text     # text | json
+
+# Console (optional) — opt-in web UI for managing grants, audit log,
+# capsule library, paired clients, and the memory browser. Disabled
+# by default; the runtime is fully usable headless via the loamss
+# CLI. Set enabled: true to serve the console on the listen address.
+# Implementation arrives in a later release; the setting is reserved.
+# console:
+#   enabled: false
+#   path: /console
 `
 
 func renderConfigTemplate(dataDir string) string {

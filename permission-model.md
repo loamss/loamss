@@ -167,6 +167,15 @@ grant:
 
 Revocations take effect **immediately** — any in-flight operation by the affected principal sees the revocation on its next permission check. There is no grace period.
 
+### Management surfaces
+
+Grants can be managed two ways. Both operate on the same underlying store; one is not authoritative over the other:
+
+- **CLI** (always available): `loamss grant list / show / revoke` for direct, scriptable management. Documented in `cli.md`.
+- **Console** (opt-in via config — see `ARCHITECTURE.md` §The Console): a web UI for issuing grants from a permission slip, modifying scopes, setting expiry, revoking, and reviewing the audit-log entries each grant has generated. Enabled by setting `console.enabled: true` in the runtime config.
+
+Headless deployments rely on the CLI; users who want a GUI flip the console flag. The check engine is unaware of which surface produced a grant change — both write through the same `grants` table.
+
 ## The user-approval primitive
 
 When a grant has `requires_user_approval: true` (either by capability default or explicit grant flag), every invocation of that capability is **interactive**:
