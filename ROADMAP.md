@@ -21,17 +21,17 @@ Goal: lock down the contracts before we build anything that depends on them.
 
 Goal: one user, one device, one real workflow, end to end.
 
-- [ ] Runtime: capsule loader (subprocess + MCP), permission enforcement, model routing, audit logging
-- [ ] Storage adapter: SQLite (encrypted) — the simplest possible
-- [ ] Memory adapter: SQLite + sqlite-vec — paired with the storage choice
-- [ ] Model adapter: Claude via API
-- [ ] Connector: Gmail (read-only first)
+- [x] Runtime: capsule loader (subprocess + MCP), permission enforcement, model routing, audit logging
+- [x] Storage adapter: `storage:fs-encrypted` (AES-256-GCM at-rest encryption on the local filesystem)
+- [x] Memory adapter: `memory:sqlite` (with embedding-aware k-NN search)
+- [x] Model adapter: `model:anthropic` (+ bonus `model:ollama` for local inference, plus `model:dummy` / `model:none`)
+- [x] Connector: Gmail (`source:gmail`, read-only, OAuth + PKCE loopback flow, incremental sync via history API)
 - [ ] Connector: Google Calendar
 - [ ] Reference capsule: daily briefing ("what's on my plate today")
 - [ ] Reference capsule: email triage ("clear my inbox with my approval per send")
 - [ ] Console: setup wizard, capsule install, permission grants, audit log viewer
-- [ ] CLI: ship the Phase 1 MVP cut from `cli.md` (init, lifecycle, source, capsule, client, memory, audit, export)
-- [ ] Docs: getting started, building your first capsule
+- [x] CLI: Phase 1 MVP cut shipped (init, doctor, start, status, version, config, capsule, client, grant, audit, approve, export, source)
+- [ ] Docs: getting started, building your first capsule (Gmail setup doc shipped: [docs/setup-gmail.md](docs/setup-gmail.md); Sources SPI doc shipped: [sources.md](sources.md))
 
 **Deliverable**: a person can install Loamss on their laptop, connect Gmail and Calendar, install two capsules, and use them for a week without us touching it.
 

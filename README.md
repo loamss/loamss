@@ -131,6 +131,7 @@ Spec set (content-complete):
 - ✅ [CLI surface](cli.md) — the `loamss` command shape
 - ✅ [Scenarios](scenarios.md) — end-to-end use cases the design must support
 - ✅ [Topology](topology.md) — front-facing-app data flows, auth boundaries, failure modes
+- ✅ [Sources](sources.md) — data-source connector spec (Source SPI + lifecycle)
 - ✅ [Benchmarks](benchmarks.md) — baseline performance numbers and methodology
 
 Reference runtime (in `runtime/`):
@@ -143,8 +144,9 @@ Reference runtime (in `runtime/`):
 - ✅ Storage adapter: `storage:fs-encrypted`
 - ✅ Memory adapter: `memory:sqlite` (with embedding-aware search)
 - ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
-- ✅ CLI: `init`, `doctor`, `start`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`
-- ⏳ Source/connector framework (Gmail, Calendar, etc.)
+- ✅ Source connector framework: `source:gmail` (OAuth + PKCE loopback flow, incremental sync via Gmail history)
+- ✅ CLI: `init`, `doctor`, `start`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`, `source`
+- ⏳ Additional source connectors (Calendar, Drive, Slack, GitHub)
 - ⏳ Console (Next.js)
 - ⏳ Capsule SDKs (TypeScript, Python)
 - ⏳ Additional adapters (s3, postgres, pgvector, openai, mistral)
@@ -171,6 +173,8 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`ROADMAP.md`](ROADMAP.md) — what we're building in what order
 - [`scenarios.md`](scenarios.md) — end-to-end use cases the design must support
 - [`topology.md`](topology.md) — front-facing-app data flows, auth boundaries, failure modes
+- [`sources.md`](sources.md) — data-source connector spec (Source SPI + lifecycle)
+- [`docs/setup-gmail.md`](docs/setup-gmail.md) — Google OAuth client setup for `source:gmail`
 - [`permission-model.md`](permission-model.md) — the capability framework
 - [`mcp-surface.md`](mcp-surface.md) — the MCP interface Loamss exposes to external consumers
 - [`capsule-spec.md`](capsule-spec.md) — the capsule format
