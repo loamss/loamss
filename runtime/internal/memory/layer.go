@@ -100,13 +100,21 @@ func (l *layerImpl) Upsert(ctx context.Context, entry Entry) error {
 		return errors.New("memory layer: Upsert requires Namespace and ID")
 	}
 
-	// Adapter write first. The adapter id namespace-qualifies the
-	// entry so different sources can use the same per-source id
-	// without collision.
+	// Adapter write first — but only when the entry has an embedding.
+	// Entries without embeddings still get their entities + threads
+	// derived (the layer's tables don't need vectors); they just
+	// aren't reachable via vector search until embeddings arrive.
+	// Today this is the common case when no embedding-capable model
+	// adapter is configured (e.g., Gmail sync without Ollama).
 	adapterID := composeAdapterID(entry.Namespace, entry.ID)
 	metadata := withNamespace(entry.Metadata, entry.Namespace, entry.ID)
-	if err := l.adapter.Upsert(ctx, adapterID, entry.Embeddings, metadata); err != nil {
-		return fmt.Errorf("memory layer: adapter upsert: %w", err)
+	if len(entry.Embeddings) > 0 {
+		if err := l.adapter.Upsert(ctx, adapterID, entry.Embeddings, metadata); err != nil {
+			return fmt.Errorf("memory layer: adapter upsert: %w", err)
+		}
+	} else {
+		l.logger.Debug("memory layer: skipping adapter upsert (no embedding)",
+			"namespace", entry.Namespace, "id", entry.ID)
 	}
 
 	// Derived state. Errors here are warnings — they don't fail the

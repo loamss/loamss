@@ -16,10 +16,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	memadapter "github.com/loamss/loamss/runtime/internal/adapter/memory"
+	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite" // registers memory:sqlite-vec
 	"github.com/loamss/loamss/runtime/internal/adapter/storage"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted" // registers storage:fs-encrypted
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
+	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
 
@@ -574,10 +577,12 @@ func maskedConfig(in map[string]any) map[string]any {
 // sourceDeps bundles the persistence + storage handles the source CLI
 // commands share. Lifetime: one set per CLI invocation.
 type sourceDeps struct {
-	store   *source.Store
-	audit   *audit.SQLite
-	storage storage.Adapter
-	logger  *slog.Logger
+	store      *source.Store
+	audit      *audit.SQLite
+	storage    storage.Adapter
+	memAdapter memadapter.Adapter
+	memLayer   memlayer.Layer
+	logger     *slog.Logger
 }
 
 func (d *sourceDeps) Close() {
@@ -589,6 +594,12 @@ func (d *sourceDeps) Close() {
 	}
 	if d.storage != nil {
 		_ = d.storage.Close(context.Background())
+	}
+	if d.memLayer != nil {
+		_ = d.memLayer.Close()
+	}
+	if d.memAdapter != nil {
+		_ = d.memAdapter.Close(context.Background())
 	}
 }
 
@@ -620,11 +631,41 @@ func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
 		return nil, fmt.Errorf("initializing storage adapter: %w", err)
 	}
 
+	// Memory adapter + layer. The adapter is the vector store the
+	// source writes into via the layer; the layer also derives
+	// entities + threads in runtime.db. Both opens are cheap (SQLite
+	// WAL); the cost is small enough to do on every CLI invocation.
+	memAdapter, err := memadapter.New(cfg.Memory.Adapter)
+	if err != nil {
+		_ = store.Close()
+		_ = w.Close(context.Background())
+		_ = stor.Close(context.Background())
+		return nil, fmt.Errorf("constructing memory adapter %q: %w", cfg.Memory.Adapter, err)
+	}
+	if err := memAdapter.Init(ctx, cfg.Memory.Config); err != nil {
+		_ = store.Close()
+		_ = w.Close(context.Background())
+		_ = stor.Close(context.Background())
+		return nil, fmt.Errorf("initializing memory adapter: %w", err)
+	}
+	layerStore, err := memlayer.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		_ = store.Close()
+		_ = w.Close(context.Background())
+		_ = stor.Close(context.Background())
+		_ = memAdapter.Close(context.Background())
+		return nil, fmt.Errorf("opening memory layer store: %w", err)
+	}
+	logger := newLogger(cfg.Log, cmd.ErrOrStderr())
+	layer := memlayer.New(memAdapter, layerStore, logger)
+
 	return &sourceDeps{
-		store:   store,
-		audit:   w,
-		storage: stor,
-		logger:  newLogger(cfg.Log, cmd.ErrOrStderr()),
+		store:      store,
+		audit:      w,
+		storage:    stor,
+		memAdapter: memAdapter,
+		memLayer:   layer,
+		logger:     logger,
 	}, nil
 }
 
@@ -647,13 +688,39 @@ func buildSourceInstance(ctx context.Context, deps *sourceDeps, c *source.Config
 		SourceName:  c.Name,
 		Config:      c.Config,
 		Storage:     deps.storage,
-		Memory:      nil, // wired in commit 2 with Gmail
+		Memory:      memoryBridge{layer: deps.memLayer},
 		Credentials: creds,
 		Logger:      slogShim{logger},
 	}); err != nil {
 		return nil, fmt.Errorf("initializing source %s: %w", c.AdapterID, err)
 	}
 	return src, nil
+}
+
+// memoryBridge adapts memlayer.Layer to the narrow
+// source.MemoryAdapter interface that source connectors see. The
+// two types carry identical fields under different package names;
+// the bridge translates without touching the data.
+//
+// Without this bridge the source package would need to import
+// memlayer directly, coupling the source SPI to the layer's
+// concrete type — which we don't want.
+type memoryBridge struct {
+	layer memlayer.Layer
+}
+
+func (b memoryBridge) Upsert(ctx context.Context, entry source.MemoryEntry) error {
+	return b.layer.Upsert(ctx, memlayer.Entry{
+		Namespace:  entry.Namespace,
+		ID:         entry.ID,
+		Content:    entry.Content,
+		Metadata:   entry.Metadata,
+		Embeddings: entry.Embeddings,
+	})
+}
+
+func (b memoryBridge) Delete(ctx context.Context, namespace, id string) error {
+	return b.layer.Delete(ctx, namespace, id)
 }
 
 // slogShim adapts *slog.Logger to the narrow source.Logger interface.

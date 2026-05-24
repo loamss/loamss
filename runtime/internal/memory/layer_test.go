@@ -67,12 +67,13 @@ func newLayer(t *testing.T) (Layer, *stubAdapter, *Store) {
 
 // --- Upsert / Delete ----------------------------------------------------
 
-func TestLayer_UpsertWritesToAdapter(t *testing.T) {
+func TestLayer_UpsertWritesToAdapterWhenVectorPresent(t *testing.T) {
 	l, adapter, _ := newLayer(t)
 	err := l.Upsert(context.Background(), Entry{
-		Namespace: "gmail-personal",
-		ID:        "m1",
-		Content:   "hello",
+		Namespace:  "gmail-personal",
+		ID:         "m1",
+		Content:    "hello",
+		Embeddings: []float32{0.1, 0.2, 0.3},
 		Metadata: map[string]any{
 			"from": "Sarah Smith <sarah@example.com>",
 		},
@@ -82,6 +83,31 @@ func TestLayer_UpsertWritesToAdapter(t *testing.T) {
 	}
 	if !adapter.has("gmail-personal:m1") {
 		t.Error("adapter did not receive the entry")
+	}
+}
+
+func TestLayer_UpsertSkipsAdapterWhenNoVector(t *testing.T) {
+	l, adapter, store := newLayer(t)
+	err := l.Upsert(context.Background(), Entry{
+		Namespace: "gmail-personal",
+		ID:        "m1",
+		Content:   "hello",
+		Metadata: map[string]any{
+			"from": "Sarah Smith <sarah@example.com>",
+		},
+		// No embeddings — common in production when no embedding-
+		// capable model adapter is configured.
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if adapter.has("gmail-personal:m1") {
+		t.Error("adapter should NOT have received an entry with empty vector")
+	}
+	// But the layer's entity derivation should still run.
+	ents, _ := store.ListEntities(context.Background(), EntityFilter{Namespace: "gmail-personal"})
+	if len(ents) == 0 {
+		t.Error("expected entity derivation to run even without embeddings")
 	}
 }
 

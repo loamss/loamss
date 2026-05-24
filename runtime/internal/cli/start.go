@@ -24,6 +24,7 @@ import (
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
+	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/server"
 )
@@ -90,6 +91,17 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = memAdapter.Close(context.Background()) }()
 
+	// Memory layer — sits above the adapter, derives entities + threads
+	// from the metadata sources write. Its own SQLite tables live in
+	// runtime.db; opening here lets MCP tools (entities.*, threads.*)
+	// share the same Layer instance the source CLI writes through.
+	memLayerStore, err := memlayer.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return fmt.Errorf("opening memory layer store: %w", err)
+	}
+	defer func() { _ = memLayerStore.Close() }()
+	memLayer := memlayer.New(memAdapter, memLayerStore, logger)
+
 	// Model adapters — multiple may be configured (e.g., Anthropic
 	// for generation + an OpenAI/voyage-style adapter for embeddings).
 	// We open every configured adapter; memory.query picks an
@@ -128,6 +140,12 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		mcp.NewAuditReadTool(auditWriter),
 		mcp.NewMemoryShowTool(memAdapter),
 		mcp.NewMemoryQueryTool(memAdapter, embeddingAdapter),
+		mcp.NewEntitiesListTool(memLayer),
+		mcp.NewEntitiesShowTool(memLayer),
+		mcp.NewEntitiesEntriesTool(memLayer),
+		mcp.NewThreadsListTool(memLayer),
+		mcp.NewThreadsShowTool(memLayer),
+		mcp.NewThreadsEntriesTool(memLayer),
 	} {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)
