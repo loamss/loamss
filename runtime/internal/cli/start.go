@@ -15,6 +15,9 @@ import (
 
 	"github.com/loamss/loamss/runtime/internal/adapter/memory"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite" // registers memory:sqlite
+	"github.com/loamss/loamss/runtime/internal/adapter/model"
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy" // registers model:dummy
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"  // registers model:none
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
@@ -73,7 +76,8 @@ func runStart(cmd *cobra.Command, _ []string) error {
 
 	engine := permission.NewEngine(store, auditWriter)
 
-	// Memory adapter — used by the memory.show MCP tool.
+	// Memory adapter — used by memory.show, memory.query, and the
+	// memory:// resource provider.
 	memAdapter, err := memory.New(cfg.Memory.Adapter)
 	if err != nil {
 		return fmt.Errorf("constructing memory adapter %q: %w", cfg.Memory.Adapter, err)
@@ -83,6 +87,19 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = memAdapter.Close(context.Background()) }()
 
+	// Model adapter — used by memory.query (for embedding the query
+	// text) and, when capsules land, by organizer capsules. v0.1
+	// supports a single model adapter; the model router (multiple
+	// adapters + per-task routing rules) is future work. The user
+	// may have configured zero model adapters (cfg.Models empty),
+	// in which case we fall back to model:none — semantic memory
+	// degrades gracefully via ErrModelDisabled.
+	modelAdapter, err := openFirstModelAdapter(ctx, cfg.Models)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = modelAdapter.Close(context.Background()) }()
+
 	// Tool registry — runtime tools register at startup. Capsule-
 	// provided tools will join the registry at install time
 	// (Phase 1b).
@@ -91,6 +108,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		mcp.NewClientInfoTool(),
 		mcp.NewAuditReadTool(auditWriter),
 		mcp.NewMemoryShowTool(memAdapter),
+		mcp.NewMemoryQueryTool(memAdapter, modelAdapter),
 	} {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)
@@ -145,6 +163,35 @@ func runServer(srv *server.Server, stop <-chan struct{}, shutdownTimeout time.Du
 	}
 	// Drain the now-stopped ListenAndServe goroutine.
 	return <-errCh
+}
+
+// openFirstModelAdapter resolves the first configured model adapter
+// and initializes it. When the user has no model adapters configured
+// (cfg.Models empty), it falls back to model:none so the runtime
+// still has a valid Adapter value to pass to memory.query and to
+// future organizer-capsule wiring. Callers that need to know
+// whether semantic memory is "really" available can ask the
+// returned adapter via Models() (model:none returns nothing).
+//
+// v0.1 uses only the first configured adapter — the multi-adapter
+// model router (routing rules per task, cost ceilings, data-class
+// filters) is future work. Subsequent entries in cfg.Models are
+// reserved for that router.
+func openFirstModelAdapter(ctx context.Context, configs []config.AdapterConfig) (model.Adapter, error) {
+	id := "model:none"
+	var cfgMap map[string]any
+	if len(configs) > 0 {
+		id = configs[0].Adapter
+		cfgMap = configs[0].Config
+	}
+	a, err := model.New(id)
+	if err != nil {
+		return nil, fmt.Errorf("constructing model adapter %q: %w", id, err)
+	}
+	if err := a.Init(ctx, cfgMap); err != nil {
+		return nil, fmt.Errorf("initializing model adapter %q: %w", id, err)
+	}
+	return a, nil
 }
 
 // installSignalTrap returns a channel that closes when SIGINT or SIGTERM
