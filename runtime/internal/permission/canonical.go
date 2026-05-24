@@ -212,5 +212,114 @@ func canonicalCapabilities(now time.Time) []CapabilityDef {
 			},
 			RegisteredAt: now,
 		},
+		// --- consequential-action capabilities (default-approval) ---
+		// These are the "this touches the outside world" capabilities.
+		// DefaultApproval: true forces an interactive confirmation on
+		// every invocation regardless of how narrow the per-grant
+		// scope is — the safety rail consequential-action review
+		// depends on. Capsules and clients may still tighten scope;
+		// they cannot relax DefaultApproval.
+		{
+			Name:            "email.send",
+			Namespace:       "email",
+			Direction:       DirectionOutbound,
+			DefaultApproval: true,
+			Scope: ScopeSchema{
+				"recipient_pattern": MatchGlobList,
+				"sender":            MatchEquals,
+				"reply_to_thread":   MatchEquals,
+			},
+			RegisteredAt: now,
+		},
+		{
+			Name:            "email.draft",
+			Namespace:       "email",
+			Direction:       DirectionInternal,
+			DefaultApproval: false,
+			Scope: ScopeSchema{
+				"folder":          MatchEquals,
+				"reply_to_thread": MatchEquals,
+			},
+			RegisteredAt: now,
+		},
+		{
+			Name:            "calendar.write",
+			Namespace:       "calendar",
+			Direction:       DirectionOutbound,
+			DefaultApproval: true,
+			Scope: ScopeSchema{
+				"tag":             MatchEquals,
+				"calendar_id":     MatchEquals,
+				"attendee_domain": MatchGlobList,
+			},
+			RegisteredAt: now,
+		},
+		{
+			Name:            "messages.send",
+			Namespace:       "messages",
+			Direction:       DirectionOutbound,
+			DefaultApproval: true,
+			Scope: ScopeSchema{
+				"channel":           MatchEquals,
+				"recipient_pattern": MatchGlobList,
+			},
+			RegisteredAt: now,
+		},
+		// --- write to user storage (files.write) ---
+		// Not Outbound — files.write affects user-owned storage, not
+		// the outside world. But it can do real damage (overwrite,
+		// delete-by-replace), so we DefaultApproval to true for the
+		// safety rail. Sophisticated organizer capsules (tax-organizer
+		// writing receipts to a dedicated folder) may bypass via
+		// scope narrowing the user explicitly approves once at install.
+		{
+			Name:            "files.write",
+			Namespace:       "files",
+			Direction:       DirectionInternal,
+			DefaultApproval: true,
+			Scope: ScopeSchema{
+				"paths":                 MatchGlobList,
+				"data_classes_included": MatchSetSubset,
+			},
+			RegisteredAt: now,
+		},
+		// --- model.call (capsules dispatch through router) ---
+		// Routing decisions (which provider, which model id, cost
+		// ceiling, data-class filters) live in the router; the
+		// capability is just "may you initiate a model call at all."
+		// DefaultApproval: false — model calls are routine for organizer
+		// capsules; per-call approval would make them unusable.
+		// Cost ceilings live on the per-grant scope.
+		{
+			Name:            "model.call",
+			Namespace:       "model",
+			Direction:       DirectionOutbound,
+			DefaultApproval: false,
+			Scope: ScopeSchema{
+				"tasks":                  MatchSetSubset,
+				"forbidden_data_classes": MatchSetExcludes,
+				"cost_ceiling_usd":       MatchRangeIncludes,
+			},
+			RegisteredAt: now,
+		},
+		// --- external.http (capsules talking to the outside) ---
+		// Capsules that need to call third-party APIs (Slack webhooks,
+		// Stripe, etc.) declare external.http with a host allowlist.
+		// DefaultApproval: false because by the time we're approving
+		// the grant we already approved the host list; per-call
+		// approval would defeat capsule autonomy.
+		{
+			Name:            "external.http",
+			Namespace:       "external",
+			Direction:       DirectionOutbound,
+			DefaultApproval: false,
+			Scope: ScopeSchema{
+				"hosts":            MatchGlobList,
+				"methods":          MatchSetSubset,
+				"max_bytes":        MatchRangeIncludes,
+				"cost_ceiling_usd": MatchRangeIncludes,
+			},
+			RegisteredAt: now,
+		},
 	}
 }
