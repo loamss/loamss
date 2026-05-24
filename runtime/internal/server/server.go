@@ -96,6 +96,15 @@ func New(opts Options) *Server {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /version", s.handleVersion)
 
+	// /console/init — accepts the first-run wizard's collected config
+	// and (eventually) writes it to disk. v0.1 ships as a stub that
+	// echoes back the payload + acknowledges receipt; full config-file
+	// writing lands in the next commit. Restricted to localhost via the
+	// listener binding (the runtime defaults to 127.0.0.1); the
+	// endpoint takes no auth because the wizard runs before any client
+	// has been paired.
+	mux.HandleFunc("POST /console/init", s.handleConsoleInit)
+
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the
 		// pairing code IS the auth token for this one request).

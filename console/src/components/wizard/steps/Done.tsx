@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/primitives/Button";
+import { Note } from "@/components/primitives/Note";
 import { useWizard } from "@/lib/wizard-state";
 
 /*
@@ -14,16 +15,21 @@ import { useWizard } from "@/lib/wizard-state";
  * next-action cards, and a quiet "or do nothing" reassurance.
  */
 export function Done() {
-  const { storage, memory, model, connect, reset } = useWizard();
+  const { storage, memory, model, connect, reset, submitResult } = useWizard();
+  const handedOff = submitResult?.ok ?? false;
 
   return (
     <div className="max-w-panel mx-auto pt-8 sm:pt-12">
       <div className="space-y-9">
         <div
-          className="smallcap text-sage animate-stagger-1"
+          className={[
+            "smallcap animate-stagger-1",
+            handedOff ? "text-sage" : "text-amber",
+          ].join(" ")}
           style={{ opacity: 0 }}
         >
-          Setup complete · {new Date().toLocaleString("en-US", { dateStyle: "medium" })}
+          {handedOff ? "Setup complete" : "Setup recorded locally"} ·{" "}
+          {new Date().toLocaleString("en-US", { dateStyle: "medium" })}
         </div>
 
         <h1
@@ -45,6 +51,25 @@ export function Done() {
           and isn&rsquo;t reachable from anywhere else on the network. Nothing
           leaves your machine until you grant something access.
         </p>
+
+        {/* Honest status of what the runtime actually did with the
+         * config the wizard sent. v0.1: the runtime accepts the POST
+         * but doesn't write the config file yet — this Note makes
+         * that explicit rather than pretending the setup persisted.
+         * Removed when the writer ships. */}
+        {submitResult && !handedOff && (
+          <div className="animate-stagger-3" style={{ opacity: 0 }}>
+            <Note kind="warn">
+              The runtime accepted your config but the file-writer
+              isn&rsquo;t shipped yet (v0.1 stub).{" "}
+              {submitResult.reason ?? ""}{" "}
+              Your selections are preserved below — you can apply them
+              manually via{" "}
+              <span className="font-mono text-2xs">loamss config</span>{" "}
+              while the writer is in flight.
+            </Note>
+          </div>
+        )}
 
         {/* Config summary — a small editorial recap. */}
         <ConfigSummary

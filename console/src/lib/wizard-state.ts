@@ -1,6 +1,12 @@
 "use client";
 
 import { create } from "zustand";
+import {
+	applyConsoleInit,
+	type ConsoleInitPayload,
+	probeRuntime,
+	type RuntimeProbe,
+} from "./runtime-client";
 
 /*
  * Wizard state.
@@ -50,6 +56,20 @@ export type ConnectMode = "skip" | "gmail";
 
 // --- Store ------------------------------------------------------------
 
+/**
+ * Result of the wizard's submission. Carries the payload the wizard
+ * built + whether the runtime accepted it. Surfaced on the Done
+ * screen so the user sees what was actually written (or, for the
+ * v0.1 stub, what would have been written).
+ */
+export interface SubmitResult {
+	ok: boolean;
+	payload: ConsoleInitPayload;
+	reason?: string; // non-empty when ok=false; explains why
+	note?: string; // optional runtime-side explanation (e.g., "stub")
+	at: string; // ISO timestamp
+}
+
 interface WizardState {
   // Navigation
   step: WizardStep;
@@ -61,9 +81,16 @@ interface WizardState {
   model: ModelConfig;
   connect: ConnectMode;
 
+  // Runtime probe — populated on mount, surfaced in the WizardShell
+  // header so the user sees "runtime: connected" or "runtime: not
+  // reachable" without having to dig.
+  runtimeProbe: RuntimeProbe | null;
+  runtimeProbedAt: string | null;
+
   // Submission state
   submitting: boolean;
   submitProgress: number; // 0..100
+  submitResult: SubmitResult | null;
 
   // Actions
   goTo: (step: WizardStep) => void;
@@ -71,6 +98,7 @@ interface WizardState {
   setMemory: (mode: MemoryMode) => void;
   setModel: (patch: Partial<ModelConfig>) => void;
   setConnect: (mode: ConnectMode) => void;
+  refreshRuntimeProbe: () => Promise<void>;
   startSubmit: () => Promise<void>;
   reset: () => void;
 }
@@ -90,8 +118,11 @@ const initialState = {
     ollamaUrl: "http://localhost:11434",
   },
   connect: "skip" as ConnectMode,
+  runtimeProbe: null,
+  runtimeProbedAt: null,
   submitting: false,
   submitProgress: 0,
+  submitResult: null,
 };
 
 // Order of steps for "furthest reached" tracking.
@@ -129,27 +160,136 @@ export const useWizard = create<WizardState>((set, get) => ({
   setConnect: (mode) => set({ connect: mode }),
 
   /*
-   * startSubmit simulates the network round-trip that posts the
-   * wizard's collected config to the runtime. Real version will go
-   * through @loamss/sdk; this mock returns canned progress over ~1.6s
-   * so the user can see the loading state.
+   * refreshRuntimeProbe pings GET /healthz on the runtime so the
+   * wizard can show "runtime: connected | not reachable" in the
+   * header. Called on mount + at major step transitions; cheap
+   * enough to repeat.
+   */
+  refreshRuntimeProbe: async () => {
+    const probe = await probeRuntime();
+    set({
+      runtimeProbe: probe,
+      runtimeProbedAt: new Date().toISOString(),
+    });
+  },
+
+  /*
+   * startSubmit POSTs the wizard's collected config to /console/init.
+   * The runtime currently runs as a stub that echoes the payload
+   * (writes_config_file=false in the capability response) — we treat
+   * any 2xx as "received" and surface the runtime's note on the
+   * Done screen.
+   *
+   * The progress bar is driven by the actual stages (build payload
+   * → POST → settle), not a canned animation. Stages are short so
+   * the user perceives a single submit click rather than five
+   * sub-steps.
    */
   startSubmit: async () => {
-    set({ submitting: true, submitProgress: 0 });
-    // Walk progress in three steps to feel like real work.
-    const steps = [
-      { progress: 25, delay: 320 }, // "writing storage config"
-      { progress: 60, delay: 440 }, // "writing memory config"
-      { progress: 100, delay: 380 }, // "registering models"
-    ];
-    for (const { progress, delay } of steps) {
-      await new Promise((r) => setTimeout(r, delay));
-      set({ submitProgress: progress });
-    }
-    // Small settle before flipping to done.
-    await new Promise((r) => setTimeout(r, 280));
-    set({ submitting: false, step: "done", furthestStep: "done" });
+    set({ submitting: true, submitProgress: 0, submitResult: null });
+    const state = get();
+    const payload = buildPayload(state);
+    set({ submitProgress: 30 });
+
+    const result = await applyConsoleInit(payload);
+    set({ submitProgress: 90 });
+
+    // Brief settle so users see the bar fill rather than snap to done.
+    await new Promise((r) => setTimeout(r, 220));
+
+    const submitResult: SubmitResult = {
+      ok: result.ok,
+      payload,
+      reason: result.ok ? undefined : result.reason,
+      // The runtime's v0.1 response includes a "note" field
+      // explaining the stub status; applyConsoleInit doesn't surface
+      // it yet but we can fetch on Done.
+      at: new Date().toISOString(),
+    };
+
+    set({
+      submitting: false,
+      submitProgress: 100,
+      submitResult,
+      step: "done",
+      furthestStep: "done",
+    });
   },
 
   reset: () => set({ ...initialState }),
 }));
+
+/**
+ * Build the /console/init payload from the wizard's collected state.
+ * Pure function; tested separately.
+ */
+export function buildPayload(state: {
+  storage: StorageConfig;
+  memory: MemoryMode;
+  model: ModelConfig;
+  connect: ConnectMode;
+}): ConsoleInitPayload {
+  // Storage.
+  const storageEntry: ConsoleInitPayload["storage"] =
+    state.storage.mode === "custom"
+      ? {
+          adapter: "storage:fs-encrypted",
+          config: {
+            root: state.storage.customPath || "~/.loamss/storage",
+            encrypt: state.storage.encrypt,
+          },
+        }
+      : {
+          adapter: "storage:fs-encrypted",
+          config: {
+            root: "~/.loamss/storage",
+            encrypt: true,
+          },
+        };
+
+  // Memory.
+  const memoryEntry: ConsoleInitPayload["memory"] = {
+    adapter: "memory:sqlite",
+    config: { path: "~/.loamss/memory.db" },
+  };
+
+  // Models — skip mode emits an empty array; the runtime falls back
+  // to model:none which surfaces graceful "no model" errors on calls.
+  const models: ConsoleInitPayload["models"] = [];
+  if (state.model.mode === "anthropic") {
+    models.push({
+      adapter: "model:anthropic",
+      config: {
+        // For the v0.1 stub we ship the key inline; production
+        // routes it through the OS keychain (the wizard would call
+        // a separate "save secret" endpoint and reference it here
+        // by handle).
+        api_key: state.model.anthropicKey,
+      },
+    });
+  } else if (state.model.mode === "ollama") {
+    models.push({
+      adapter: "model:ollama",
+      config: { url: state.model.ollamaUrl },
+    });
+  }
+
+  // Source intents — the wizard's "Connect" step might select Gmail
+  // but doesn't actually run the OAuth flow inside the wizard. The
+  // runtime sees the intent and the dashboard surfaces it as a
+  // pending action.
+  const source_intents: ConsoleInitPayload["source_intents"] = [];
+  if (state.connect === "gmail") {
+    source_intents.push({
+      adapter: "source:gmail",
+      name: "gmail-personal",
+    });
+  }
+
+  return {
+    storage: storageEntry,
+    memory: memoryEntry,
+    models,
+    source_intents,
+  };
+}

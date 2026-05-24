@@ -6,6 +6,7 @@ import { Field } from "@/components/primitives/Field";
 import { Note } from "@/components/primitives/Note";
 import { StepLayout, StepFooter } from "./Storage";
 import { useWizard } from "@/lib/wizard-state";
+import { probeOllama } from "@/lib/runtime-client";
 
 /*
  * Models — optional. The most decision-heavy screen of the wizard.
@@ -16,30 +17,47 @@ import { useWizard } from "@/lib/wizard-state";
  *   anthropic — paste an API key (Field with prefix)
  *   ollama    — auto-detect at localhost:11434; show detected/not
  *
- * The Ollama detection is mocked: on mount we run a fake check that
- * resolves "detected" after ~700ms. Real version pings the runtime,
- * which pings Ollama.
+ * Ollama detection runs as a real fetch to /api/tags. Three states:
+ *   checking      — pulsing dot
+ *   detected      — sage dot + the list of installed models
+ *   not-detected  — amber dot + setup hint
+ *   cors-blocked  — amber dot + an honest "browser CORS, runtime
+ *                   may still reach it" note (this is the
+ *                   common case in dev since Ollama doesn't ship
+ *                   CORS headers)
  */
-type OllamaStatus = "checking" | "detected" | "not-found";
+type OllamaStatus =
+  | { state: "checking" }
+  | { state: "detected"; models: string[] }
+  | { state: "not-detected"; reason: string }
+  | { state: "cors-blocked"; reason: string };
 
 export function Models() {
   const { model, setModel, goTo } = useWizard();
-  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>("checking");
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>({
+    state: "checking",
+  });
 
   useEffect(() => {
-    // Mocked detection — in production this goes through @loamss/sdk
-    // to ask the runtime to ping Ollama.
-    const t = setTimeout(() => {
-      // Pretend Ollama IS detected for the prototype. Toggle to
-      // "not-found" via the URL ?ollama=missing for testing the
-      // alternate state.
-      const params = new URLSearchParams(window.location.search);
-      setOllamaStatus(
-        params.get("ollama") === "missing" ? "not-found" : "detected",
-      );
-    }, 700);
-    return () => clearTimeout(t);
-  }, []);
+    // Honor the dev shortcut for offline testing.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("ollama") === "missing") {
+      setOllamaStatus({
+        state: "not-detected",
+        reason: "(dev override: ?ollama=missing)",
+      });
+      return;
+    }
+
+    let cancelled = false;
+    void probeOllama(model.ollamaUrl).then((result) => {
+      if (cancelled) return;
+      setOllamaStatus(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [model.ollamaUrl]);
 
   const nextDisabled =
     model.mode === "anthropic" && model.anthropicKey.trim().length < 8;
@@ -102,7 +120,7 @@ export function Models() {
           details={
             <div className="space-y-4">
               <OllamaStatusRow status={ollamaStatus} url={model.ollamaUrl} />
-              {ollamaStatus === "not-found" && (
+              {ollamaStatus.state === "not-detected" && (
                 <Note kind="warn">
                   Ollama isn&rsquo;t reachable at{" "}
                   <span className="font-mono text-2xs">
@@ -120,6 +138,14 @@ export function Models() {
                   and run{" "}
                   <span className="font-mono text-2xs">ollama serve</span>, then
                   return.
+                </Note>
+              )}
+              {ollamaStatus.state === "cors-blocked" && (
+                <Note kind="info">
+                  The browser can&rsquo;t reach Ollama directly (CORS).
+                  The runtime can still talk to it from your machine —
+                  pick this option and we&rsquo;ll verify on the
+                  runtime side at submit time.
                 </Note>
               )}
               <Field
@@ -147,9 +173,15 @@ export function Models() {
 }
 
 /*
- * OllamaStatusRow — the live-feeling status indicator while we ping.
- * Three states: checking (a pulsing dot), detected (green dot + green
- * text), not-found (amber dot + amber text).
+ * OllamaStatusRow — the live-feeling status indicator. Four states
+ * from the real probe in runtime-client.ts:
+ *
+ *   checking      — pulsing dot
+ *   detected      — sage dot + model count + "healthy" badge
+ *   not-detected  — amber dot
+ *   cors-blocked  — amber dot but "uncertain" framing (this is the
+ *                   common case in dev because Ollama doesn't ship
+ *                   CORS headers; the runtime CAN still reach it)
  */
 function OllamaStatusRow({
   status,
@@ -163,15 +195,21 @@ function OllamaStatusRow({
       <StatusDot status={status} />
       <div className="flex-1 min-w-0">
         <div className="text-sm text-ink">
-          {status === "checking" && "Checking for Ollama…"}
-          {status === "detected" && "Ollama detected"}
-          {status === "not-found" && "Ollama not detected"}
+          {status.state === "checking" && "Checking for Ollama…"}
+          {status.state === "detected" &&
+            `Ollama detected · ${status.models.length} model${
+              status.models.length === 1 ? "" : "s"
+            }`}
+          {status.state === "not-detected" && "Ollama not detected"}
+          {status.state === "cors-blocked" && "Ollama reachability unknown"}
         </div>
         <div className="font-mono text-2xs text-ink-quiet truncate">
-          {url}
+          {status.state === "detected" && status.models.length > 0
+            ? status.models.slice(0, 3).join(" · ")
+            : url}
         </div>
       </div>
-      {status === "detected" && (
+      {status.state === "detected" && (
         <div className="smallcap text-sage flex-none">healthy</div>
       )}
     </div>
@@ -179,14 +217,14 @@ function OllamaStatusRow({
 }
 
 function StatusDot({ status }: { status: OllamaStatus }) {
-  if (status === "checking") {
+  if (status.state === "checking") {
     return (
       <span className="relative inline-flex h-2.5 w-2.5 flex-none">
         <span className="absolute inset-0 rounded-full bg-ink-hairline animate-pulse-soft" />
       </span>
     );
   }
-  if (status === "detected") {
+  if (status.state === "detected") {
     return (
       <span className="relative inline-flex h-2.5 w-2.5 flex-none">
         <span className="absolute inset-0 rounded-full bg-sage" />

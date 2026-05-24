@@ -34,6 +34,19 @@ export default function ConsoleRoot() {
   const step = useWizard((s) => s.step);
   const goTo = useWizard((s) => s.goTo);
   const setModel = useWizard((s) => s.setModel);
+  const refreshRuntimeProbe = useWizard((s) => s.refreshRuntimeProbe);
+
+  // Probe the runtime on mount so the header can show
+  // "runtime: connected" or "runtime: not reachable". Re-poll every
+  // 20 seconds so the badge stays current if the daemon comes up or
+  // goes down mid-wizard.
+  useEffect(() => {
+    void refreshRuntimeProbe();
+    const interval = setInterval(() => {
+      void refreshRuntimeProbe();
+    }, 20_000);
+    return () => clearInterval(interval);
+  }, [refreshRuntimeProbe]);
 
   // Dev shortcut: ?step=models lands directly on a step. Useful for
   // screenshots and reviewing individual screens without click-

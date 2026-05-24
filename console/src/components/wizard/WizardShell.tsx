@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Stepper, type StepDef } from "./Stepper";
 import { Wordmark } from "@/components/primitives/Wordmark";
 import { useWizard, stepIndex, type WizardStep } from "@/lib/wizard-state";
+import type { RuntimeProbe } from "@/lib/runtime-client";
 
 /*
  * WizardShell — the persistent frame the wizard steps render into.
@@ -42,17 +43,22 @@ export function WizardShell({
   stepKey,
   showStepper = true,
 }: WizardShellProps) {
-  const { step, goTo, furthestStep } = useWizard();
+  const { step, goTo, furthestStep, runtimeProbe } = useWizard();
 
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header — small, considered. The wordmark is the only logo
-       * moment in the wizard. */}
-      <header className="px-6 sm:px-10 py-6 sm:py-8 flex items-center justify-between">
+       * moment in the wizard. The runtime-status badge on the right
+       * tells the user whether their daemon is reachable; it updates
+       * every 20s in the background. */}
+      <header className="px-6 sm:px-10 py-6 sm:py-8 flex items-center justify-between gap-4">
         <Wordmark size="md" />
-        <span className="smallcap text-ink-quiet hidden sm:inline">
-          First-run setup
-        </span>
+        <div className="flex items-center gap-4">
+          <RuntimeBadge probe={runtimeProbe} />
+          <span className="smallcap text-ink-quiet hidden sm:inline">
+            First-run setup
+          </span>
+        </div>
       </header>
 
       {/* Stepper — sits below the header, full-width, hairline rule
@@ -95,5 +101,35 @@ export function WizardShell({
         </span>
       </footer>
     </div>
+  );
+}
+
+/**
+ * RuntimeBadge surfaces the live state of the runtime daemon in the
+ * header. Three visual states:
+ *
+ *   detected      — sage dot + version badge ("runtime v0.1")
+ *   not-reachable — amber dot + helpful label
+ *   probing       — quiet dot pulsing
+ *
+ * The badge is small + monospace for version numbers; it's part of
+ * the "state is visible" design principle (see console-design.md).
+ */
+function RuntimeBadge({ probe }: { probe: RuntimeProbe | null }) {
+  if (probe === null) {
+    return (
+      <span className="flex items-center gap-2 text-xs text-ink-quiet">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber" />
+        <span className="font-mono text-2xs">runtime not reachable</span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-2 text-xs text-ink-muted">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-sage" />
+      <span className="font-mono text-2xs">
+        runtime · {probe.health.version}
+      </span>
+    </span>
   );
 }
