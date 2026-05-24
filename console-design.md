@@ -357,6 +357,516 @@ The **scope is narrowable inline**. The user doesn't have to know the canonical 
 
 Filters use the same predicates the `loamss audit log` CLI uses (actor, capability, outcome, time). Each row expands to show the full audit entry (JSON view + hash-chain verification status).
 
+## Detailed screens — every tab
+
+The dashboard and three flows above set the visual language. Below is a sketch for every other top-level view, plus the high-leverage sub-flows (connect-to-Gmail wizard, consequential-action approval).
+
+### Sources tab (list view)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources                                          [+ Add source]  │
+│                                                                     │
+│   2 sources connected · last sync 2 minutes ago                     │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  ●  gmail-personal                            source:gmail  │    │
+│  │     12,408 entries · synced 2m ago · sync ok               │    │
+│  │                                                             │    │
+│  │     Next sync: in 58 min   [ Sync now ]   [ Manage ▾ ]      │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  ●  calendar-personal                       source:calendar │    │
+│  │     482 events · synced 4m ago · sync ok                    │    │
+│  │                                                             │    │
+│  │     Next sync: in 56 min   [ Sync now ]   [ Manage ▾ ]      │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  + Add another source                                               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- The status dot is green for `sync ok`, yellow for `auth required`, red for `error`.
+- "Manage ▾" is a compact menu — Pause, Edit config, Re-authenticate, Remove.
+- "Add another source" at the bottom mirrors the top-right button — discoverable from either direction.
+
+### Sources → Add → Gmail wizard
+
+The point-of-truth for "seamless". Four steps, each one click of forward motion away from the user. The actual OAuth complexity (Google Cloud project creation, OAuth consent screen, test users) gets boxed into Step 1 with the option to skip if the user already has credentials.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources › Add › Gmail                          Step 1 of 4 · ●○○○│
+│                                                                     │
+│  We need an OAuth client for your Google account                    │
+│                                                                     │
+│  Loamss talks to Gmail through Google's OAuth. You need an OAuth    │
+│  client (it identifies "Loamss running on your machine" to Google). │
+│                                                                     │
+│  This is a one-time setup. We'll guide you through it.              │
+│                                                                     │
+│   ┌───────────────────────────────────────────────────────────┐     │
+│   │  ○  Walk me through it (10 min, opens Google Cloud)       │     │
+│   │                                                            │     │
+│   │  ●  I already have credentials                             │     │
+│   │      Client ID:     [ ...apps.googleusercontent.com    ]   │     │
+│   │      Client secret: [ GOCSPX-...                       ]   │     │
+│   │      ⓘ Stored in your OS keychain. Get yours at           │     │
+│   │        console.cloud.google.com →                          │     │
+│   └───────────────────────────────────────────────────────────┘     │
+│                                                                     │
+│                                              [ Back ]  [ Continue ] │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+"Walk me through it" opens a side panel with `docs/setup-gmail.md` rendered inline (numbered, with deep-links to the right Google Cloud Console pages). The user clicks through it without leaving the console.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources › Add › Gmail                          Step 2 of 4 · ●●○○│
+│                                                                     │
+│  Sign in with Google                                                │
+│                                                                     │
+│   ┌───────────────────────────────────────────────────────────┐     │
+│   │   [ G ]  Continue with Google                              │     │
+│   └───────────────────────────────────────────────────────────┘     │
+│                                                                     │
+│   We'll open Google's consent screen in a new tab. After you        │
+│   approve, this window will continue automatically — you don't      │
+│   need to copy anything.                                            │
+│                                                                     │
+│   ⓘ The first time you see "App isn't verified" — that's expected.  │
+│     Your OAuth client is in "Testing" mode (that's the right        │
+│     setting for personal use). Click Advanced → Go to Loamss.       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+The "App isn't verified" inline explanation is critical — it's the most-confusing moment in the existing CLI flow, and a sentence here removes a whole class of support questions.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources › Add › Gmail                          Step 3 of 4 · ●●●○│
+│                                                                     │
+│  What should we sync from Gmail?                                    │
+│                                                                     │
+│  Name this connection                                               │
+│     [ gmail-personal                                              ] │
+│     (Lower-case, hyphens. You can have multiple Gmail connections.) │
+│                                                                     │
+│  Time range                                                         │
+│     ○  Everything                                                   │
+│     ●  Last 30 days   (recommended for first sync)                  │
+│     ○  Last 90 days                                                 │
+│     ○  Custom              From: [ 2026-01-01 ]                     │
+│                                                                     │
+│  Filter (optional)                                                  │
+│     [                                                             ] │
+│     Use Gmail's search syntax. Examples: `from:newsletters@x.com`,  │
+│     `label:important`, `after:2026/01/01`. Leave empty for all mail.│
+│                                                                     │
+│  Cap on first sync                                                  │
+│     [ 1000 ▾ ]   (you can raise this in Settings later)             │
+│                                                                     │
+│                                              [ Back ]  [ Continue ] │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Defaults are conservative ("Last 30 days", "1000 messages") because a maximum-pull first sync is the kind of thing that surprises a user when they see "5 GB downloaded" three hours in. The "you can raise this in Settings later" reassurance is in-line.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources › Add › Gmail                          Step 4 of 4 · ●●●●│
+│                                                                     │
+│  When should Loamss sync?                                           │
+│                                                                     │
+│   ●  Every hour                                                     │
+│   ○  Every 4 hours                                                  │
+│   ○  Daily                                                          │
+│   ○  Manual only                                                    │
+│                                                                     │
+│   Also: Sync now after I'm done? [ ✓ ]                              │
+│                                                                     │
+│                                              [ Back ]  [ Finish ]   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Done state:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources › gmail-personal                                         │
+│                                                                     │
+│   ✓ Connected to Gmail                                              │
+│                                                                     │
+│   Sync starting now…  (47 of 1000 ▓▓░░░░░░░░░░░░░░░░░░░░ 4%)        │
+│   ETA ~2m remaining                                                 │
+│                                                                     │
+│   [ View activity ]    [ Pause sync ]    [ Open dashboard ]         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Live progress is the difference between "did anything happen?" and "I can see it working." The progress bar should reflect actual records-ingested, not a fake spinner.
+
+### Sources → Detail view
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Sources › gmail-personal                                         │
+│                                                                     │
+│   ●  gmail-personal      source:gmail                               │
+│                                                                     │
+│   ┌──── Sync status ─────────────────────────────────────────────┐  │
+│   │  Last sync:  2 minutes ago · ok · +14 messages, 482 KB       │  │
+│   │  Next sync:  in 58 minutes (hourly)                          │  │
+│   │  Total:      12,408 entries · 4.2 GB                         │  │
+│   │                                                              │  │
+│   │  [ Sync now ]   [ Pause ]   [ Change schedule ▾ ]            │  │
+│   └──────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+│   ┌──── Recent sync history ────────────────────────────────────┐   │
+│   │  2:14pm   ok   +14 messages, 482 KB     12s                  │   │
+│   │  1:14pm   ok   +27 messages, 1.1 MB     18s                  │   │
+│   │  12:14pm  ok   +6 messages, 220 KB      9s                   │   │
+│   │  11:14am  ok   +33 messages, 2.4 MB     21s                  │   │
+│   │  → View all sync history                                     │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── Configuration ──────────────────────────────────────────┐   │
+│   │  Filter:     (all mail)                            [ Edit ] │   │
+│   │  Cap:        no limit on incremental syncs         [ Edit ] │   │
+│   │  Schedule:   hourly                                [ Edit ] │   │
+│   │  OAuth:      sarah@example.com    [ Re-authenticate ]       │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── Danger zone ────────────────────────────────────────────┐   │
+│   │  Remove this source                                          │   │
+│   │  Stops syncing and deletes the stored credentials.           │   │
+│   │  Already-ingested entries stay in your memory until you      │   │
+│   │  delete them via Memory → Manage.                            │   │
+│   │  [ Remove gmail-personal ]                                   │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Three regions: live status (top), history (middle), config (bottom). The "Danger zone" pattern (separated, labeled, two-step confirm) reserves visual weight for actions the user is going to do once and never undo.
+
+### Apps tab (list view)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Apps                                              [+ Pair app]   │
+│                                                                     │
+│   2 apps connected                                                  │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  ●  ChatGPT laptop                              active      │    │
+│  │     2 grants · last seen 3h ago · 47 calls today             │    │
+│  │                                                             │    │
+│  │     memory.read   ← gmail-personal (excludes health)         │    │
+│  │     memory.query  ← same scope                               │    │
+│  │                                                             │    │
+│  │     [ Adjust grants ]   [ View activity ]   [ Revoke ]       │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  ●  Inbox app (smoke-test)                       active      │    │
+│  │     1 grant · last seen 2m ago · 3 calls today               │    │
+│  │                                                             │    │
+│  │     memory.read   ← gmail-personal                           │    │
+│  │                                                             │    │
+│  │     [ Adjust grants ]   [ View activity ]   [ Revoke ]       │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  + Pair another app                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+The two grants for ChatGPT are summarized inline (capability → scope) so the user doesn't have to drill into a detail view to see "what does this app know about me?"
+
+### Apps → Adjust grants
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Apps › ChatGPT laptop › Adjust grants                            │
+│                                                                     │
+│  ┌──── memory.read ─────────────────────────────────────────────┐   │
+│  │ Read entries from your memory.                               │   │
+│  │                                                              │   │
+│  │  Namespaces:  [ ✓ ] gmail-personal                           │   │
+│  │               [   ] calendar-personal                        │   │
+│  │  Excluded:    [ ✓ ] health                                   │   │
+│  │  Expires:     [ never ▾ ]                                    │   │
+│  │                                                              │   │
+│  │  [ Save changes ]   [ Revoke this grant ]                    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  ┌──── memory.query ────────────────────────────────────────────┐   │
+│  │ Semantic search.                                             │   │
+│  │ (Same scope as memory.read above)                            │   │
+│  │  [ Save changes ]   [ Revoke this grant ]                    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  ┌──── Available but not granted ───────────────────────────────┐   │
+│  │  memory.write          [ Grant ]                             │   │
+│  │  files.read            [ Grant ]                             │   │
+│  │  ... (others by capability registry)                         │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+The "Available but not granted" section makes the universe of capabilities discoverable without requiring the user to consult a separate spec.
+
+### Capsules tab
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Capsules                                         [+ Install]     │
+│                                                                     │
+│   1 capsule installed                                               │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  ●  Daily Briefing                              v0.2.0       │    │
+│  │     com.loamss.example.daily-brief                          │    │
+│  │     Runs hourly · last run 47 minutes ago                    │    │
+│  │                                                             │    │
+│  │     Tools:     2 (greet, daily_brief)                        │    │
+│  │     Grants:    memory.read (gmail-personal + calendar)       │    │
+│  │     Model:     anthropic / claude-sonnet-4-5                 │    │
+│  │                                                             │    │
+│  │     [ View output ]  [ Configure ]  [ Pause ]  [ Uninstall ] │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  + Install another capsule                                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Capsules → Install (from a path)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Capsules › Install                                               │
+│                                                                     │
+│   Capsules are sandboxed extensions that run inside your runtime.   │
+│   They're code. You install them from a folder you trust.           │
+│                                                                     │
+│   ┌──── From local folder ───────────────────────────────────┐      │
+│   │   [ /Users/me/dev/daily-brief                       ▾ ]   │      │
+│   │   [ Browse… ]                                             │      │
+│   │                                                           │      │
+│   │   We'll validate the manifest before installing.          │      │
+│   └───────────────────────────────────────────────────────────┘     │
+│                                                                     │
+│   ┌──── From the registry ───────────────────────────────────┐      │
+│   │   [Coming soon]                                           │      │
+│   └───────────────────────────────────────────────────────────┘     │
+│                                                                     │
+│                                              [ Cancel ]   [ Next ]  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+After validating the manifest:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Capsules › Install › Review                                      │
+│                                                                     │
+│   You're installing Daily Briefing v0.2.0                           │
+│                                                                     │
+│   ┌──── It will get these capabilities ─────────────────────────┐   │
+│   │                                                              │   │
+│   │  ● memory.read                                               │   │
+│   │    "Needed to surface recent entries to the caller."         │   │
+│   │     Scope:  [ ✓ ] gmail-personal                             │   │
+│   │             [ ✓ ] calendar-personal                          │   │
+│   │             [ ✓ ] exclude health                             │   │
+│   │                                                              │   │
+│   │  ● model.call (anthropic)                                    │   │
+│   │    "Needed to generate the daily briefing text."             │   │
+│   │     Cost ceiling: $0.50/day  [ Edit ]                        │   │
+│   │                                                              │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── It will provide these tools ────────────────────────────┐   │
+│   │  • greet — Say hello to someone.                             │   │
+│   │  • daily_brief — Generate a brief for today.                 │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│                                              [ Cancel ]  [ Install ]│
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+The install confirmation IS the permission slip for a capsule. Same UI primitive used for app pairing.
+
+### Memory tab (entities)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Memory                                                           │
+│                                                                     │
+│   [ Entities ] [ Threads ] [ Browse all ]                           │
+│                                                                     │
+│   Filter:  [ all namespaces ▾ ]  [ person ▾ ]                       │
+│   Search:  [                                                      ] │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Sarah Smith                              gmail-personal     │    │
+│  │     sarah@example.com  +1 alias                              │    │
+│  │     208 entries · most recent 2 days ago                     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Bob Lee                                  gmail-personal     │    │
+│  │     bob@example.com                                          │    │
+│  │     74 entries · most recent 4 hours ago                     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│  ...                                                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Clicking an entity opens a detail view:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Memory › Sarah Smith                                             │
+│                                                                     │
+│   Sarah Smith                                                       │
+│   person · gmail-personal · 208 entries                             │
+│                                                                     │
+│   Aliases:  sarah@example.com (email)                               │
+│             Sarah Smith (name)                                      │
+│                                                                     │
+│   First seen:  March 4, 2024                                        │
+│   Most recent: 2 days ago                                           │
+│                                                                     │
+│  ┌──── Recent entries ─────────────────────────────────────────┐    │
+│  │  2 days ago    from  "Re: Project Alpha kickoff"             │    │
+│  │  3 days ago    to    "Project Alpha kickoff"                 │    │
+│  │  5 days ago    cc    "Budget review"                         │    │
+│  │  ...                                                         │    │
+│  │  → View all 208 entries                                      │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  ┌──── Threads involving Sarah ────────────────────────────────┐    │
+│  │  • Project Alpha kickoff           4 entries                 │    │
+│  │  • Budget review                   6 entries                 │    │
+│  │  • Q2 planning                     12 entries                │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+The Memory tab is the "what does Loamss know about me?" surface. Making it browsable is part of the trust story.
+
+### Memory tab (threads)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Memory                                                           │
+│                                                                     │
+│   [ Entities ] [ Threads ] [ Browse all ]                           │
+│                                                                     │
+│   Filter:  [ all namespaces ▾ ]                                     │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Project Alpha kickoff                    gmail-personal     │    │
+│  │     4 entries · last activity 2 hours ago                    │    │
+│  │     Sarah Smith, Bob Lee                                     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Q2 planning                              gmail-personal     │    │
+│  │     12 entries · last activity 1 day ago                     │    │
+│  │     Sarah Smith, Carol Wu, Bob Lee, +2                       │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│  ...                                                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Settings tab
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ⌂ Settings                                                         │
+│                                                                     │
+│   ┌──── Storage ─────────────────────────────────────────────────┐   │
+│   │  storage:fs-encrypted at ~/.loamss/storage                   │   │
+│   │  AES-256-GCM · 4.2 GB used                                   │   │
+│   │  [ Change location ]   [ Re-key ]                            │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── Memory ──────────────────────────────────────────────────┐   │
+│   │  memory:sqlite at ~/.loamss/memory.db                        │   │
+│   │  12,890 entries · dimension 1536                             │   │
+│   │  [ Vacuum / re-index ]                                       │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── Models ──────────────────────────────────────────────────┐   │
+│   │  model:anthropic   claude-sonnet-4-5     $1.42 used today    │   │
+│   │  model:ollama      llama3.2 (local)      embeddings          │   │
+│   │  [ Add model ]   [ Routing rules ▸ ]                         │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── Backup + export ────────────────────────────────────────┐   │
+│   │  Last export:  March 12, 2026                                │   │
+│   │  [ Export now ]   [ Schedule weekly ]                        │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│   ┌──── Advanced ────────────────────────────────────────────────┐   │
+│   │  Edit raw config file ▸                                      │   │
+│   │  Capability registry ▸                                       │   │
+│   │  Diagnostics + logs ▸                                        │   │
+│   │  Pair another device (mobile) ▸                              │   │
+│   └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Settings is the only screen where the words "adapter" and "capability registry" appear in primary text. Everywhere else, they live behind the friendly names.
+
+### Pending approval (consequential action)
+
+The trickiest flow: an app calls `email.send` (or any capability with `DefaultApproval=false`). The runtime returns `-32002 approval_required` to the app and notifies the console. The user sees a card on the dashboard:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ┌──── ⚠ Approval needed ──────────────────────────────────────┐    │
+│  │                                                              │    │
+│  │  ChatGPT laptop wants to:                                    │    │
+│  │                                                              │    │
+│  │       Send email                                             │    │
+│  │       To:       sarah@example.com                            │    │
+│  │       Subject:  Re: Project Alpha kickoff                    │    │
+│  │       Body:     Sounds great — let's discuss at 2pm…         │    │
+│  │                                                              │    │
+│  │       (Full draft preview ▸)                                 │    │
+│  │                                                              │    │
+│  │       Capability: email.send                                 │    │
+│  │       Asked 14 seconds ago · expires in 4:46                 │    │
+│  │                                                              │    │
+│  │   [ Approve ]    [ Approve + remember ]    [ Deny ]          │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  (rest of dashboard…)                                               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Three buttons:
+
+- **Approve** — one-shot. The next email.send request prompts again.
+- **Approve + remember** — converts the grant from `requires_approval=true` to a narrower grant scoped to *this kind of action* (e.g., "any email to sarah@example.com" or "any email" depending on what the user wants).
+- **Deny** — rejects; the runtime returns the deny to the app; the app's UI tells the user.
+
+The "remember" path is the one that makes the system stop nagging the user without sacrificing transparency. The narrowing is a side panel that opens before commit.
+
+## Visual language (preliminary)
+
+This isn't a spec — just the visual choices the wireframes assume:
+
+- **Typography**: system font stack (no web fonts; offline-first). One sans for UI, one mono for code/IDs.
+- **Colors**: neutral grays + 3 semantic colors (green=ok, yellow=needs attention, red=error). One brand accent kept minimal — the console looks like infrastructure software, not a SaaS product.
+- **Density**: comfortable, not packed. Information cards have breathing room. Lists are scannable; details are reachable in one click.
+- **Iconography**: minimal. Inline status dots, a few action glyphs (sync, pause, delete). No decorative illustration.
+- **Motion**: skeleton loaders for async data; subtle transitions between states. No splash screens.
+
+When the design partner / `frontend-design` skill takes a pass, this is the brief to challenge. The wireframes describe the IA + flows; the visual identity is wide open.
+
 ## Technical architecture
 
 Two questions worth deciding before code:
@@ -400,9 +910,9 @@ Cons:
 - Two ports to remember
 - The console needs its own bearer-token pairing flow
 
-### Recommendation
+### Decision (2026-05-24)
 
-**Option A for v1**, possibly evolving to A+B for power users later. Reasons:
+**Option A — embedded in the runtime binary.** Reasons:
 
 1. The seamlessness goal demands one-process simplicity. "Run `loamss start`, open the URL" is a tractable user instruction. "Run two things and configure them to point at each other" is not.
 2. Next.js's static export covers everything the console needs. The console is a thin client over the existing MCP surface — it doesn't need SSR or server actions.
