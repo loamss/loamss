@@ -160,9 +160,9 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 
 **Curious**: this README, then [`scenarios.md`](scenarios.md), then [`ROADMAP.md`](ROADMAP.md) for timelines.
 
-**Capsule developer**: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md), and the TypeScript SDK at [`sdk/typescript/`](sdk/typescript/) (hello-world capsule + docs).
+**Capsule developer**: start with [`docs/build-your-first-capsule.md`](docs/build-your-first-capsule.md). For depth: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`capsule-spec.md`](capsule-spec.md), [`permission-model.md`](permission-model.md), and the TypeScript SDK at [`sdk/typescript/`](sdk/typescript/).
 
-**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances — Path B): [`mcp-surface.md`](mcp-surface.md), then relevant scenarios in [`scenarios.md`](scenarios.md), and [`topology.md`](topology.md) if you're a front-facing app with direct-from-storage delivery.
+**External platform integrator** (you want your AI tool, content platform, or service to connect to user Loamss instances — Path B): start with [`docs/connect-your-app.md`](docs/connect-your-app.md). For depth: [`mcp-surface.md`](mcp-surface.md), relevant scenarios in [`scenarios.md`](scenarios.md), and [`topology.md`](topology.md) if you're a front-facing app with direct-from-storage delivery.
 
 **Native app builder** (you want to build an app where Loamss is the backing data store from day one — Path A): [`native-apps.md`](native-apps.md), then [`mcp-surface.md`](mcp-surface.md) for the protocol details, then [`topology.md`](topology.md) for the deployment shape.
 
@@ -178,6 +178,8 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`topology.md`](topology.md) — front-facing-app data flows, auth boundaries, failure modes
 - [`sources.md`](sources.md) — data-source connector spec (Source SPI + lifecycle)
 - [`docs/setup-gmail.md`](docs/setup-gmail.md) — Google OAuth client setup for `source:gmail`
+- [`docs/build-your-first-capsule.md`](docs/build-your-first-capsule.md) — walking-through tutorial: write, install, and invoke a capsule
+- [`docs/connect-your-app.md`](docs/connect-your-app.md) — walking-through tutorial: pair an external app and drive Loamss from it
 - [`permission-model.md`](permission-model.md) — the capability framework
 - [`mcp-surface.md`](mcp-surface.md) — the MCP interface Loamss exposes to external consumers
 - [`capsule-spec.md`](capsule-spec.md) — the capsule format

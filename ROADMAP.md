@@ -31,7 +31,7 @@ Goal: one user, one device, one real workflow, end to end.
 - [ ] Reference capsule: email triage ("clear my inbox with my approval per send")
 - [ ] Console: setup wizard, capsule install, permission grants, audit log viewer
 - [x] CLI: Phase 1 MVP cut shipped (init, doctor, start, status, version, config, capsule, client, grant, audit, approve, export, source)
-- [ ] Docs: getting started, building your first capsule (Gmail setup doc shipped: [docs/setup-gmail.md](docs/setup-gmail.md); Sources SPI doc shipped: [sources.md](sources.md))
+- [x] Docs: getting started, building your first capsule — shipped: [docs/setup-gmail.md](docs/setup-gmail.md), [docs/build-your-first-capsule.md](docs/build-your-first-capsule.md), [docs/connect-your-app.md](docs/connect-your-app.md), [sources.md](sources.md)
 
 **Deliverable**: a person can install Loamss on their laptop, connect Gmail and Calendar, install two capsules, and use them for a week without us touching it.
 
