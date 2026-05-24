@@ -40,7 +40,15 @@ func TestRootCommandHelp(t *testing.T) {
 		t.Fatalf("--help failed: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "Personal data infrastructure") {
-		t.Errorf("root help missing short description\ngot:\n%s", buf.String())
+	out := buf.String()
+	for _, want := range []string{
+		"personal data infrastructure", // from the Long
+		"Usage:",
+		"Available Commands:",
+		"version",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("root help missing %q\ngot:\n%s", want, out)
+		}
 	}
 }
