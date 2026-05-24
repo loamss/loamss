@@ -14,6 +14,7 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted"
 
 	// Built-in sources register themselves via init().
+	_ "github.com/loamss/loamss/runtime/internal/source/files"
 	_ "github.com/loamss/loamss/runtime/internal/source/gmail"
 )
 
