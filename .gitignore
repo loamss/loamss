@@ -43,8 +43,11 @@ venv/
 *.test
 *.out
 coverage.txt
-loamss
-loamss-*
+# Compiled binaries — paths only, not bare names (otherwise we'd accidentally
+# ignore the cmd/loamss/ source directory).
+runtime/bin/
+loamss-*.tar.gz
+loamss-*.zip
 
 # Runtime local state (when the daemon exists)
 .loamss/

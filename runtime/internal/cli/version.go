@@ -20,7 +20,7 @@ var versionCmd = &cobra.Command{
 	Short: "Print version information",
 	Long:  "Print the runtime version, commit, build date, Go version, and platform.",
 	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		out := cmd.OutOrStdout()
 		fmt.Fprintf(out, "loamss %s\n", version)
 		fmt.Fprintf(out, "  commit:     %s\n", commit)
