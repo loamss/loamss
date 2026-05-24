@@ -132,6 +132,7 @@ Spec set (content-complete):
 - ✅ [Scenarios](scenarios.md) — end-to-end use cases the design must support
 - ✅ [Topology](topology.md) — front-facing-app data flows, auth boundaries, failure modes
 - ✅ [Sources](sources.md) — data-source connector spec (Source SPI + lifecycle)
+- ✅ [Memory layer](memory-layer.md) — entity + thread resolution above the memory adapter
 - ✅ [Benchmarks](benchmarks.md) — baseline performance numbers and methodology
 
 Reference runtime (in `runtime/`):
@@ -177,6 +178,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 - [`scenarios.md`](scenarios.md) — end-to-end use cases the design must support
 - [`topology.md`](topology.md) — front-facing-app data flows, auth boundaries, failure modes
 - [`sources.md`](sources.md) — data-source connector spec (Source SPI + lifecycle)
+- [`memory-layer.md`](memory-layer.md) — entity + thread resolution above the memory adapter
 - [`docs/setup-gmail.md`](docs/setup-gmail.md) — Google OAuth client setup for `source:gmail`
 - [`docs/build-your-first-capsule.md`](docs/build-your-first-capsule.md) — walking-through tutorial: write, install, and invoke a capsule
 - [`docs/connect-your-app.md`](docs/connect-your-app.md) — walking-through tutorial: pair an external app and drive Loamss from it
