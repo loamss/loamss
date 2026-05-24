@@ -24,9 +24,113 @@ and capsule-install flows (the runtime never auto-issues from a CLI
 prompt); this command tree exposes inspection and revocation.
 
 Subcommands:
+  create   issue a new grant (emits grant.create audit entry)
   list     list grants, optionally filtered by principal / capability / status
   show     show a single grant in full
   revoke   revoke a grant (idempotent; emits grant.revoke audit entry)`,
+}
+
+// --- create ------------------------------------------------------------
+
+var (
+	grantCreatePrincipalKind   string
+	grantCreatePrincipalID     string
+	grantCreateCapability      string
+	grantCreateScopeJSON       string
+	grantCreateRationale       string
+	grantCreateUserNote        string
+	grantCreateFraming         string
+	grantCreateExpiresIn       time.Duration
+	grantCreateRequiresApprove bool
+	grantCreateJSON            bool
+)
+
+var grantCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Issue a new capability grant",
+	Long: `Issue a grant tying a capability to a principal (capsule or
+client) under an optional scope. Capability must already be in the
+registry — see the canonical list shipped with the runtime, plus any
+capsule-declared capabilities added at install time.
+
+Scope, if provided via --scope-json, must conform to the
+capability's declared ScopeSchema. Unknown fields are rejected.
+
+The grant is the only thing standing between a client/capsule and
+the user's data; issuing one is the consequential UX moment that the
+permission slip is built around. The CLI mirrors that surface:
+explicit principal, explicit capability, explicit scope.
+
+Emits a grant.create audit entry.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		deps, err := openPermissionDeps(cmd)
+		if err != nil {
+			return err
+		}
+		defer deps.Close()
+
+		kind := permission.PrincipalKind(grantCreatePrincipalKind)
+		if kind != permission.PrincipalCapsule && kind != permission.PrincipalClient {
+			return fmt.Errorf("--principal-kind must be %q or %q",
+				permission.PrincipalCapsule, permission.PrincipalClient)
+		}
+		if grantCreatePrincipalID == "" {
+			return errors.New("--principal-id is required")
+		}
+		if grantCreateCapability == "" {
+			return errors.New("--capability is required")
+		}
+
+		var scope map[string]any
+		if strings.TrimSpace(grantCreateScopeJSON) != "" {
+			if err := json.Unmarshal([]byte(grantCreateScopeJSON), &scope); err != nil {
+				return fmt.Errorf("--scope-json: %w", err)
+			}
+		}
+
+		var expiresAt *time.Time
+		if grantCreateExpiresIn > 0 {
+			t := time.Now().UTC().Add(grantCreateExpiresIn)
+			expiresAt = &t
+		}
+
+		framing := permission.Framing(grantCreateFraming)
+		if framing == "" {
+			framing = permission.FramingPrivateRead
+		}
+		if framing != permission.FramingPrivateRead && framing != permission.FramingPublicPublish {
+			return fmt.Errorf("--framing must be %q or %q",
+				permission.FramingPrivateRead, permission.FramingPublicPublish)
+		}
+
+		g := permission.Grant{
+			Principal:            permission.Principal{Kind: kind, ID: grantCreatePrincipalID},
+			Capability:           grantCreateCapability,
+			Scope:                scope,
+			Framing:              framing,
+			Rationale:            grantCreateRationale,
+			UserNote:             grantCreateUserNote,
+			RequiresUserApproval: grantCreateRequiresApprove,
+			ExpiresAt:            expiresAt,
+		}
+		issued, err := deps.engine.IssueGrant(cmd.Context(), g, "user")
+		if err != nil {
+			return err
+		}
+		if grantCreateJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(issued)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(),
+			"✓ Issued grant %s\n  %s/%s  →  %s\n",
+			issued.ID,
+			issued.Principal.Kind, issued.Principal.ID,
+			issued.Capability,
+		)
+		return err
+	},
 }
 
 // --- list --------------------------------------------------------------
@@ -237,6 +341,19 @@ func isTerminal(f *os.File) bool {
 }
 
 func init() {
+	// create
+	grantCreateCmd.Flags().StringVar(&grantCreatePrincipalKind, "principal-kind", "", "principal kind: capsule | client (required)")
+	grantCreateCmd.Flags().StringVar(&grantCreatePrincipalID, "principal-id", "", "principal id (capsule manifest name or client id, required)")
+	grantCreateCmd.Flags().StringVar(&grantCreateCapability, "capability", "", "capability name (required; must be in the registry)")
+	grantCreateCmd.Flags().StringVar(&grantCreateScopeJSON, "scope-json", "", "scope as a JSON object, e.g. '{\"tag\":\"public\"}'")
+	grantCreateCmd.Flags().StringVar(&grantCreateRationale, "rationale", "", "rationale shown in audit / permission slip")
+	grantCreateCmd.Flags().StringVar(&grantCreateUserNote, "user-note", "", "user-added note kept with the grant")
+	grantCreateCmd.Flags().StringVar(&grantCreateFraming, "framing", "private_read", "private_read | public_publish (UX framing only)")
+	grantCreateCmd.Flags().DurationVar(&grantCreateExpiresIn, "expires-in", 0, "expiry as a duration from now (e.g. 24h); zero means never")
+	grantCreateCmd.Flags().BoolVar(&grantCreateRequiresApprove, "requires-approval", false, "require interactive user approval on each use")
+	grantCreateCmd.Flags().BoolVar(&grantCreateJSON, "json", false, "output as JSON")
+	grantCmd.AddCommand(grantCreateCmd)
+
 	// list
 	grantListCmd.Flags().StringVar(&grantListPrincipalKind, "principal-kind", "", "filter by principal kind (capsule|client)")
 	grantListCmd.Flags().StringVar(&grantListPrincipalID, "principal-id", "", "filter by principal id")

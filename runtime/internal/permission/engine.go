@@ -160,6 +160,41 @@ func (e *Engine) Check(ctx context.Context, req CheckRequest) (*CheckResult, err
 	return res, nil
 }
 
+// IssueGrant is the engine's audit-emitting wrapper over
+// Store.IssueGrant. CLI and (future) console paths call this so
+// every grant creation lands in the audit log as `grant.create`.
+//
+// issuedBy is recorded as the audit actor id. The store handles
+// capability lookup, scope validation, and the
+// approval-cannot-be-downgraded invariant; this method adds the
+// audit emission on top.
+func (e *Engine) IssueGrant(ctx context.Context, g Grant, issuedBy string) (*Grant, error) {
+	issued, err := e.store.IssueGrant(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	entry := audit.Entry{
+		Type:    "grant.create",
+		Actor:   audit.Actor{Kind: audit.ActorUser, ID: defaulted(issuedBy, "user")},
+		Subject: &audit.Subject{Kind: audit.SubjectGrant, ID: issued.ID},
+		Outcome: audit.OutcomeSuccess,
+		Data: map[string]any{
+			"capability":     issued.Capability,
+			"principal_kind": string(issued.Principal.Kind),
+			"principal_id":   issued.Principal.ID,
+			"framing":        string(issued.Framing),
+		},
+	}
+	if issued.Rationale != "" {
+		entry.Data["rationale"] = issued.Rationale
+	}
+	if issued.ExpiresAt != nil {
+		entry.Data["expires_at"] = issued.ExpiresAt.Format(time.RFC3339Nano)
+	}
+	_, _ = e.audit.Append(ctx, entry)
+	return issued, nil
+}
+
 // RevokeGrant marks a grant revoked and emits a grant.revoke audit
 // entry. Idempotent: revoking an already-revoked grant returns nil
 // without emitting a duplicate audit entry. The Store-level
