@@ -7,12 +7,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/mcp"
+	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/server"
 )
 
@@ -50,10 +54,31 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		"listen_addr", cfg.Runtime.ListenAddr,
 	)
 
+	// Open the permission store + audit writer; both live for the
+	// runtime's full lifetime and are shared with the MCP handler.
+	ctx := cmd.Context()
+	store, err := permission.Open(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return fmt.Errorf("opening permission store: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	auditWriter, err := audit.OpenSQLite(ctx, filepath.Join(cfg.Runtime.DataDir, "audit.db"))
+	if err != nil {
+		return fmt.Errorf("opening audit log: %w", err)
+	}
+	defer func() { _ = auditWriter.Close(context.Background()) }()
+
+	engine := permission.NewEngine(store, auditWriter)
+	tools := mcp.NewRegistry()
+
 	srv := server.New(server.Options{
 		Addr:    cfg.Runtime.ListenAddr,
 		Logger:  logger,
 		Version: version,
+		Engine:  engine,
+		Audit:   auditWriter,
+		Tools:   tools,
 	})
 
 	stop := installSignalTrap(logger)

@@ -1,6 +1,15 @@
-// Package server hosts the runtime's HTTP surface. In v0.1 it serves a
-// minimal /healthz endpoint; the MCP surface, console API, and other
-// Phase 1 components mount onto the same mux as they land.
+// Package server hosts the runtime's HTTP surface. It owns the
+// http.Server lifecycle and the mux that wires together the public
+// endpoints: /healthz, /version, /pair (pairing redemption), and
+// /mcp (the MCP JSON-RPC + SSE surface).
+//
+// The HTTP layer is deliberately thin. Business logic lives in
+// internal/permission (capability gating), internal/mcp (MCP
+// protocol), and the adapter packages. server.go only does:
+//
+//   - Route registration and middleware composition
+//   - Request/response shape for /pair (the one non-MCP JSON endpoint)
+//   - Server lifecycle (listen, serve, graceful shutdown)
 package server
 
 import (
@@ -12,6 +21,10 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/loamss/loamss/runtime/internal/audit"
+	"github.com/loamss/loamss/runtime/internal/mcp"
+	"github.com/loamss/loamss/runtime/internal/permission"
 )
 
 // Options configures a new Server.
@@ -24,8 +37,24 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Version is the runtime's build version, reported in /healthz responses
-	// so external probes can verify which build is running.
+	// and as the MCP server identity so external probes/clients can verify
+	// which build is running.
 	Version string
+
+	// Engine is the permission framework. Required for the /pair and /mcp
+	// endpoints; when nil, only /healthz and /version are mounted (matches
+	// the v0.1 minimum and the existing tests that exercise just those).
+	Engine *permission.Engine
+
+	// Audit is the audit log writer. Required when Engine is set; the
+	// MCP handler emits audit entries through it.
+	Audit audit.Writer
+
+	// Tools is the MCP tool registry. Required when Engine is set;
+	// commit 1 registers nothing into it, but the registry must be
+	// constructed so the MCP surface can advertise the (empty) tool
+	// set in initialize.
+	Tools *mcp.Registry
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -35,20 +64,54 @@ type Server struct {
 	logger  *slog.Logger
 	addr    string
 	version string
+
+	// engine + audit are non-nil iff the MCP surface is mounted.
+	engine *permission.Engine
+	audit  audit.Writer
 }
 
 // New constructs a Server. The HTTP listener is not bound until
 // ListenAndServe or Serve is called.
+//
+// When Options.Engine is nil, only the basic endpoints (/healthz,
+// /version) are mounted — useful for tests and for very early-boot
+// scenarios where the permission framework isn't ready yet. When
+// Engine is provided, /pair and /mcp join the mux.
 func New(opts Options) *Server {
 	s := &Server{
 		addr:    opts.Addr,
 		logger:  opts.Logger,
 		version: opts.Version,
+		engine:  opts.Engine,
+		audit:   opts.Audit,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /version", s.handleVersion)
+
+	if opts.Engine != nil {
+		// /pair: pairing redemption, unauthenticated by design (the
+		// pairing code IS the auth token for this one request).
+		mux.HandleFunc("POST /pair", s.handlePair)
+
+		// /mcp: bearer-authenticated, dispatches MCP JSON-RPC (POST)
+		// and SSE (GET). The mcp.Handler runs under the auth
+		// middleware so by the time it sees a request, the principal
+		// is in context.
+		if opts.Tools == nil {
+			panic("server: Options.Tools must be non-nil when Engine is non-nil")
+		}
+		mcpHandler := mcp.NewHandler(mcp.Deps{
+			Engine:        opts.Engine,
+			Audit:         opts.Audit,
+			Tools:         opts.Tools,
+			Logger:        opts.Logger,
+			ServerName:    "loamss",
+			ServerVersion: opts.Version,
+		})
+		mux.Handle("/mcp", s.bearerAuthMiddleware(s.attachMCPPrincipal(mcpHandler)))
+	}
 
 	s.httpSrv = &http.Server{
 		Addr:    opts.Addr,
@@ -61,6 +124,19 @@ func New(opts Options) *Server {
 	}
 
 	return s
+}
+
+// attachMCPPrincipal copies the authenticated principal/client from
+// the server's context keys into the mcp package's context keys so
+// downstream MCP handlers (which know nothing about server's keys)
+// can read them via mcp.PrincipalFromContext.
+func (s *Server) attachMCPPrincipal(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := PrincipalFromContext(r.Context())
+		c := ClientFromContext(r.Context())
+		ctx := mcp.WithPrincipal(r.Context(), p, c)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // Addr returns the configured bind address. After Serve has been called
@@ -102,7 +178,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// --- handlers -----------------------------------------------------------
+// --- basic handlers ----------------------------------------------------
 
 // HealthzResponse is the JSON shape returned by /healthz.
 type HealthzResponse struct {
