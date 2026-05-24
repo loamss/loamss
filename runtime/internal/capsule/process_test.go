@@ -418,7 +418,18 @@ func runMCPCapsuleHelper() {
 			if cb := os.Getenv("GO_CAPSULE_CALLBACK_METHOD"); cb != "" {
 				cbCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 				defer cancel()
-				_, _ = tr.Request(cbCtx, cb, map[string]any{"from": "capsule"})
+				var cbParams any = map[string]any{"from": "capsule"}
+				// Special-case tools/call: build a proper params
+				// shape so the runtime dispatcher can resolve the
+				// tool. The capsule sends:
+				//   {"name": <tool>, "arguments": <args>}
+				if cb == "tools/call" {
+					cbParams = map[string]any{
+						"name":      os.Getenv("GO_CAPSULE_CALLBACK_TOOL"),
+						"arguments": map[string]any{"id": "any"},
+					}
+				}
+				_, _ = tr.Request(cbCtx, cb, cbParams)
 			}
 			return map[string]any{
 				"content": []map[string]any{

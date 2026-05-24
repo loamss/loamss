@@ -179,14 +179,12 @@ func TestHost_StopShutsDownClients(t *testing.T) {
 	}
 }
 
-func TestHost_CapsuleCallbackReturnsMethodNotFound(t *testing.T) {
-	// v0.1 stub: capsule callbacks aren't dispatched yet. The
-	// fake-capsule helper exits cleanly even when its callback
-	// fails, so this test mostly verifies the stub returns the
-	// expected RPCError shape.
+func TestHost_CapsuleCallback_RejectsUnknownMethod(t *testing.T) {
+	// The runtime handler only accepts tools/call. Any other
+	// method returns -32601 directly to the capsule.
 	f := newHostFixture(t)
 	installFakeCapsule(t, f, "drafter")
-	t.Setenv("GO_CAPSULE_CALLBACK_METHOD", "memory.query")
+	t.Setenv("GO_CAPSULE_CALLBACK_METHOD", "ping")
 
 	if _, err := f.host.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -198,16 +196,178 @@ func TestHost_CapsuleCallbackReturnsMethodNotFound(t *testing.T) {
 	}()
 
 	tool, _ := f.tools.Get("drafter.echo")
-	// Tool invocation triggers the capsule's callback attempt;
-	// the runtime handler stub returns method-not-found. The
-	// capsule continues regardless and returns its echo.
-	in := mcp.ToolInput{Args: json.RawMessage(`{}`)}
-	res, err := tool.Handler(context.Background(), in)
+	// Triggers a callback to "ping" (not tools/call). Capsule
+	// receives -32601 but continues and returns its echo to us.
+	res, err := tool.Handler(context.Background(), mcp.ToolInput{Args: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatalf("Handler: %v", err)
 	}
 	if len(res.Content) == 0 {
-		t.Fatal("expected content blocks")
+		t.Fatal("expected content blocks even when callback failed")
+	}
+}
+
+func TestHost_CapsuleCallback_TooltsCallDeniedWithoutGrant(t *testing.T) {
+	// Capsule calls tools/call name=memory.read tool, but has no
+	// grant. Runtime returns -32001 permission denied. The capsule
+	// observes the error and still completes its own response.
+	f := newHostFixture(t)
+	installFakeCapsule(t, f, "drafter")
+	// Have the capsule call back into tools/call with a runtime
+	// tool name. The mcp-capsule helper sends back the result of
+	// the callback as its own tool result; we'll verify the
+	// audit entries directly.
+	t.Setenv("GO_CAPSULE_HELPER", "mcp-capsule")
+	t.Setenv("GO_CAPSULE_CALLBACK_METHOD", "tools/call")
+	t.Setenv("GO_CAPSULE_CALLBACK_TOOL", "memory.show")
+
+	// Register memory.show in the runtime registry so the dispatch
+	// has a tool to resolve. We use the real one from mcp.
+	registerMemoryShowForTest(t, f)
+
+	if _, err := f.host.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = f.host.Stop(ctx)
+	}()
+
+	tool, _ := f.tools.Get("drafter.echo")
+	_, err := tool.Handler(context.Background(), mcp.ToolInput{Args: json.RawMessage(`{"id":"x"}`)})
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+
+	// Audit should show a check.deny against the capsule principal.
+	entries, _ := f.audit.Query(context.Background(), audit.Filter{Types: []string{"check.deny"}})
+	if len(entries) == 0 {
+		t.Errorf("expected check.deny audit entry from the capsule callback path")
+	}
+}
+
+func TestHost_CapsuleCallback_AllowedWithGrant(t *testing.T) {
+	f := newHostFixture(t)
+	installFakeCapsule(t, f, "drafter")
+	t.Setenv("GO_CAPSULE_HELPER", "mcp-capsule")
+	t.Setenv("GO_CAPSULE_CALLBACK_METHOD", "tools/call")
+	t.Setenv("GO_CAPSULE_CALLBACK_TOOL", "memory.show")
+
+	registerMemoryShowForTest(t, f)
+
+	// The Installer would normally issue capsule grants. For this
+	// test we go through the engine directly to avoid the full
+	// install round-trip.
+	if _, err := f.permStore.IssueGrant(context.Background(), permission.Grant{
+		Principal: permission.Principal{
+			Kind: permission.PrincipalCapsule, ID: "drafter",
+		},
+		Capability: "memory.read",
+	}); err != nil {
+		t.Fatalf("IssueGrant: %v", err)
+	}
+
+	if _, err := f.host.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = f.host.Stop(ctx)
+	}()
+
+	tool, _ := f.tools.Get("drafter.echo")
+	_, err := tool.Handler(context.Background(), mcp.ToolInput{Args: json.RawMessage(`{"id":"x"}`)})
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+
+	// Audit should show check.allow (from the engine.Check call)
+	// AND tool.invoked with actor.kind=capsule.
+	allows, _ := f.audit.Query(context.Background(),
+		audit.Filter{Types: []string{"check.allow"}})
+	if len(allows) == 0 {
+		t.Errorf("expected check.allow audit entry")
+	}
+	invokes, _ := f.audit.Query(context.Background(),
+		audit.Filter{Types: []string{"tool.invoked"}})
+	foundCapsuleActor := false
+	for _, e := range invokes {
+		if e.Actor.Kind == audit.ActorCapsule && e.Actor.ID == "drafter" {
+			foundCapsuleActor = true
+			if v, _ := e.Data["via"].(string); v != "capsule_callback" {
+				t.Errorf("expected via=capsule_callback, got %v", e.Data["via"])
+			}
+		}
+	}
+	if !foundCapsuleActor {
+		t.Errorf("expected tool.invoked with actor=capsule:drafter, got: %+v", invokes)
+	}
+}
+
+func TestHost_CapsuleCallback_RejectsCrossCapsuleCall(t *testing.T) {
+	// Install two capsules; capsule A tries to call capsule B's
+	// tool via the runtime. The Host rejects with -32601 (the
+	// "deferred to v0.2" message).
+	f := newHostFixture(t)
+	installFakeCapsule(t, f, "alpha")
+	installFakeCapsule(t, f, "beta")
+	// Configure alpha to try calling beta.echo.
+	t.Setenv("GO_CAPSULE_HELPER", "mcp-capsule")
+	t.Setenv("GO_CAPSULE_CALLBACK_METHOD", "tools/call")
+	t.Setenv("GO_CAPSULE_CALLBACK_TOOL", "beta.echo")
+
+	if _, err := f.host.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = f.host.Stop(ctx)
+	}()
+
+	tool, _ := f.tools.Get("alpha.echo")
+	_, err := tool.Handler(context.Background(), mcp.ToolInput{Args: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+	// Capsule's own tool.invoked happens regardless; verifying
+	// the cross-capsule rejection happened requires watching the
+	// daemon logs. We assert that no check.allow against the
+	// "beta" principal exists.
+	entries, _ := f.audit.Query(context.Background(),
+		audit.Filter{Types: []string{"check.allow"}})
+	for _, e := range entries {
+		if e.Actor.Kind == audit.ActorCapsule && e.Actor.ID == "alpha" {
+			t.Errorf("alpha should not have a check.allow — its cross-capsule call was rejected before Check ran: %+v", e)
+		}
+	}
+}
+
+// registerMemoryShowForTest registers the real memory.show tool
+// into the test host's registry so capsule-callback tests have a
+// runtime tool to dispatch to. Uses an in-memory adapter sized to
+// match model:dummy.
+func registerMemoryShowForTest(t *testing.T, f *hostFixture) {
+	t.Helper()
+	// Use a minimal stub: register an mcp.Tool with Capability =
+	// memory.read but a Handler that returns a synthetic result.
+	// Avoids dragging the memory adapter into the host tests
+	// (which would require initializing it from a config map).
+	err := f.tools.Register(mcp.Tool{
+		Name:        "memory.show",
+		Description: "test stub",
+		Capability:  "memory.read",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Handler: func(_ context.Context, _ mcp.ToolInput) (mcp.ToolResult, error) {
+			return mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "ok"}},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("registerMemoryShowForTest: %v", err)
 	}
 }
 

@@ -39,6 +39,16 @@ type Host struct {
 
 	mu      sync.Mutex
 	clients map[string]*Client
+
+	// capsuleTools tracks which mcp.Registry entries came from a
+	// capsule (vs runtime-provided). Used by the RuntimeHandler to
+	// reject cross-capsule callbacks — capsule A asking the runtime
+	// to call capsule B's tool is explicitly deferred to v0.2 per
+	// capsule-spec.md §Open questions. The map key is the tool
+	// name (the namespaced form, e.g. "drafter.draft_reply"); the
+	// value is the capsule name that owns it (kept for diagnostics).
+	capsuleToolsMu sync.RWMutex
+	capsuleTools   map[string]string
 }
 
 // NewHost constructs a Host. tools is the mcp.Registry where
@@ -49,12 +59,13 @@ func NewHost(store *Store, engine *permission.Engine, w audit.Writer, tools *mcp
 		logger = slog.Default()
 	}
 	return &Host{
-		store:   store,
-		engine:  engine,
-		audit:   w,
-		tools:   tools,
-		logger:  logger,
-		clients: make(map[string]*Client),
+		store:        store,
+		engine:       engine,
+		audit:        w,
+		tools:        tools,
+		logger:       logger,
+		clients:      make(map[string]*Client),
+		capsuleTools: make(map[string]string),
 	}
 }
 
@@ -121,7 +132,11 @@ func (h *Host) StartOne(ctx context.Context, c Installed) error {
 		if err := h.tools.Register(tool); err != nil {
 			h.logger.Warn("capsule host: tool registration failed",
 				"capsule", c.Name, "tool", t.Name, "err", err)
+			continue
 		}
+		h.capsuleToolsMu.Lock()
+		h.capsuleTools[tool.Name] = c.Name
+		h.capsuleToolsMu.Unlock()
 	}
 	return nil
 }
@@ -172,26 +187,198 @@ func (h *Host) mountTool(capsuleName string, t ToolAdvertisement, client *Client
 	}
 }
 
-// runtimeHandler returns the RuntimeHandler the Client will invoke
+// runtimeHandler returns the RuntimeHandler the Client invokes
 // when the capsule sends an inbound request (capsule → runtime
-// callback path). v0.1 stub: every inbound call returns
-// method-not-found. The follow-up commit fills this in with the
-// real dispatch chain — permission.Check against the capsule's
-// grants → execute through the runtime's adapter layer → audit.
+// callback path). The handler:
 //
-// The capsule name parameter is captured for the future
-// principal-aware dispatch.
+//  1. Accepts `tools/call` as the one supported method. Capsules
+//     speak MCP; calling back into the runtime is just another
+//     tools/call on the runtime's side of the connection. Any
+//     other method returns -32601.
+//
+//  2. Resolves the requested tool against the runtime's mcp.Registry.
+//     Rejects cross-capsule calls (capsule A asking the runtime to
+//     call capsule B's tool) with -32601 — explicitly deferred per
+//     capsule-spec.md §Open questions.
+//
+//  3. Runs permission.Engine.Check with the capsule as the principal.
+//     The capsule's grants (issued at install time per its manifest's
+//     `permissions:` section) are the ones consulted. Deny → -32001;
+//     approval required → -32002 with approval_id; allow → proceed.
+//
+//  4. Invokes the runtime tool's Handler. The result + audit emission
+//     mirror the external-client tools/call path in mcp/tools.go;
+//     audit entries use the capsule actor kind so consumers can
+//     filter by who.
+//
+// The shape mirrors mcp.Handler.handleToolsCall but operates against
+// the capsule principal and bypasses the HTTP request envelope.
+// Sharing more code would require an additional refactor of mcp's
+// dispatch path; keeping the two paths separate is OK for now —
+// they're each ~50 lines and divergence is unlikely.
 func (h *Host) runtimeHandler(capsuleName string) RuntimeHandler {
-	_ = capsuleName
-	return func(_ context.Context, method string, _ json.RawMessage) (any, error) {
-		// TODO(capsule callbacks): map method to a runtime tool,
-		// check the capsule's grants, dispatch, emit audit. For
-		// now, capsules cannot call back into the runtime.
-		return nil, &mcp.RPCError{
-			Code:    -32601,
-			Message: "method not yet supported by the runtime: " + method,
+	principal := permission.Principal{Kind: permission.PrincipalCapsule, ID: capsuleName}
+	return func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		if method != "tools/call" {
+			return nil, &mcp.RPCError{
+				Code:    -32601,
+				Message: "capsule callback: only tools/call is supported, got " + method,
+			}
 		}
+		var p struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &mcp.RPCError{
+				Code:    -32602,
+				Message: "capsule callback: decoding params: " + err.Error(),
+			}
+		}
+		if p.Name == "" {
+			return nil, &mcp.RPCError{Code: -32602, Message: "tool name is required"}
+		}
+
+		// Reject cross-capsule callbacks.
+		h.capsuleToolsMu.RLock()
+		owner, isCapsuleTool := h.capsuleTools[p.Name]
+		h.capsuleToolsMu.RUnlock()
+		if isCapsuleTool {
+			h.logger.Info("capsule callback: cross-capsule call rejected",
+				"caller", capsuleName, "tool", p.Name, "owner", owner)
+			return nil, &mcp.RPCError{
+				Code:    -32601,
+				Message: "cross-capsule callbacks are not yet supported (capsule " + capsuleName + " tried to call " + p.Name + ", owned by " + owner + ")",
+			}
+		}
+
+		tool, ok := h.tools.Get(p.Name)
+		if !ok {
+			return nil, &mcp.RPCError{
+				Code:    -32003,
+				Message: "unknown tool: " + p.Name,
+			}
+		}
+
+		// Permission check (skip when the tool has no Capability,
+		// matching the external-client semantics — client.info is
+		// such a tool).
+		var grantID string
+		if tool.Capability != "" {
+			scope, err := h.scopeFor(tool, p.Arguments)
+			if err != nil {
+				return nil, &mcp.RPCError{
+					Code:    -32602,
+					Message: "scope projection failed: " + err.Error(),
+				}
+			}
+			decision, err := h.engine.Check(ctx, permission.CheckRequest{
+				Principal:      principal,
+				Capability:     tool.Capability,
+				AttemptedScope: scope,
+				Rationale:      "capsule " + capsuleName + " → " + p.Name,
+			})
+			if err != nil {
+				return nil, &mcp.RPCError{Code: -32603, Message: "permission check failed: " + err.Error()}
+			}
+			switch decision.Decision {
+			case permission.DecisionDeny:
+				return nil, &mcp.RPCError{
+					Code:    -32001,
+					Message: "permission denied",
+					Data: map[string]any{
+						"capability": tool.Capability,
+						"reason":     decision.Reason,
+						"capsule":    capsuleName,
+					},
+				}
+			case permission.DecisionApprovalRequired:
+				return nil, &mcp.RPCError{
+					Code:    -32002,
+					Message: "user approval required",
+					Data: map[string]any{
+						"capability":  tool.Capability,
+						"approval_id": decision.ApprovalID,
+						"capsule":     capsuleName,
+					},
+				}
+			case permission.DecisionAllow:
+				grantID = decision.GrantID
+			}
+		}
+
+		// Execute. The runtime tool's Handler returns mcp.ToolResult;
+		// we marshal it as the MCP tools/call result shape.
+		in := mcp.ToolInput{
+			Args:      p.Arguments,
+			Principal: principal,
+			GrantID:   grantID,
+		}
+		res, err := tool.Handler(ctx, in)
+		if err != nil {
+			h.recordToolFailed(ctx, principal, tool.Name, err)
+			return nil, &mcp.RPCError{
+				Code:    -32099,
+				Message: "tool execution failed: " + err.Error(),
+				Data:    map[string]any{"tool": tool.Name},
+			}
+		}
+		h.recordToolInvoked(ctx, principal, tool.Name, tool.Capability, grantID)
+
+		// Shape into the MCP tools/call result envelope.
+		return map[string]any{
+			"content": res.Content,
+			"isError": res.IsError,
+		}, nil
 	}
+}
+
+// scopeFor projects the tool call's arguments through the tool's
+// ScopeOf function to produce the attempted-scope map the engine's
+// Check uses. Tools without a ScopeOf return nil scope (matches an
+// unrestricted grant). Mirrors the helper in mcp/tools.go but
+// duplicates the small body to avoid exporting an mcp internal.
+func (h *Host) scopeFor(t mcp.Tool, args json.RawMessage) (map[string]any, error) {
+	if t.ScopeOf == nil {
+		return nil, nil
+	}
+	return t.ScopeOf(args)
+}
+
+// recordToolInvoked emits the tool.invoked audit entry for a
+// capsule-initiated call. Distinct from the external-client path
+// only in the actor kind — that lets audit consumers filter by who.
+func (h *Host) recordToolInvoked(ctx context.Context, p permission.Principal, toolName, capability, grantID string) {
+	entry := audit.Entry{
+		Type:    "tool.invoked",
+		Actor:   audit.Actor{Kind: audit.ActorCapsule, ID: p.ID},
+		Subject: &audit.Subject{Kind: audit.SubjectTool, ID: toolName},
+		Outcome: audit.OutcomeSuccess,
+		Data: map[string]any{
+			"tool":       toolName,
+			"capability": capability,
+			"via":        "capsule_callback",
+		},
+	}
+	if grantID != "" {
+		entry.Data["grant_id"] = grantID
+	}
+	_, _ = h.audit.Append(ctx, entry)
+}
+
+func (h *Host) recordToolFailed(ctx context.Context, p permission.Principal, toolName string, err error) {
+	entry := audit.Entry{
+		Type:    "tool.failed",
+		Actor:   audit.Actor{Kind: audit.ActorCapsule, ID: p.ID},
+		Subject: &audit.Subject{Kind: audit.SubjectTool, ID: toolName},
+		Outcome: audit.OutcomeError,
+		Data: map[string]any{
+			"tool":  toolName,
+			"error": err.Error(),
+			"via":   "capsule_callback",
+		},
+	}
+	_, _ = h.audit.Append(ctx, entry)
 }
 
 // Stop gracefully shuts down every Client. Returns the first error
