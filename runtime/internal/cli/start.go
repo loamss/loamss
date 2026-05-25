@@ -14,7 +14,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/loamss/loamss/runtime/internal/adapter/memory"
+	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/chroma"   // registers memory:chroma
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/pgvector" // registers memory:pgvector
+	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/qdrant"   // registers memory:qdrant
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite"   // registers memory:sqlite
 	"github.com/loamss/loamss/runtime/internal/adapter/model"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/anthropic" // registers model:anthropic
