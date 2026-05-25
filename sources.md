@@ -250,33 +250,31 @@ The trust calculus for sources differs from capsules — sources are *first-part
 | Trust level | full (its code is part of the runtime) | sandboxed (no implicit trust) |
 | Audit | runtime emits lifecycle entries on the source's behalf | every callback gets a per-call permission check + audit entry |
 
-This asymmetry is intentional. Third-party data-source connectors are out of scope for v0.1 — when they land in a later phase they'll come in as capsules (the `ingestor` role from `capsule-spec.md`), not as in-tree `source.Source` implementations.
+This asymmetry is intentional. **The in-tree path is for SPI reference implementations, not for catalogue growth.** New data-source connectors ship as capsules under the `ingestor` role from `capsule-spec.md`. Locking provider-specific code into the runtime fossilizes the catalogue and forces a runtime release for every new connector — exactly the trap `extensibility.md` flags.
 
-## MVP connectors
+## Reference SPI implementations (in-tree)
 
-| Adapter ID | Status | Scope |
+Two connectors ship in the runtime as the SPI's reference implementations. They are not the catalogue — they are the shape a capsule ingestor matches.
+
+| Adapter ID | Status | Why it's in-tree |
 | --- | --- | --- |
-| `source:gmail` | ✅ shipped (first reference) | Read-only message sync via Gmail v1; OAuth + PKCE loopback flow |
-| `source:calendar` | ⏳ planned | Read-only event sync via Google Calendar v3 |
-| `source:slack` | ⏳ planned | Read-only message sync from selected channels |
-| `source:drive` | ⏳ planned | Read-only file metadata + content sync |
-| `source:github` | ⏳ planned | Read-only repo/issue/PR sync |
+| `source:files` | ✅ shipped | The frictionless no-auth demo — proves the SPI works without any credentials machinery |
+| `source:gmail` | ✅ shipped | The OAuth + incremental-sync reference — proves the SPI handles loopback OAuth, cursor persistence, rate limits, and attachments |
 
-`source:gmail` ships first because it's the most-requested data shape and an honest stress-test of the SPI (OAuth, incremental sync, rate limits, attachments). Nothing in the runtime is Gmail-specific — the SPI is the surface, and a connector to any other provider plugs in the same way. See the Gmail-specific setup guide at [`docs/setup-gmail.md`](docs/setup-gmail.md) for the steps a user follows to get the first connector live; future connectors get their own setup guides in `docs/`.
+These two cover the two ends of the SPI: no-auth and full OAuth. Everything else (Calendar, Drive, Slack, GitHub, Notion, RSS, Linear, …) belongs in the capsule marketplace, not in `runtime/internal/source/`.
 
-## Adding a new source connector (developer guide)
+See [`docs/setup-gmail.md`](docs/setup-gmail.md) for the user-facing OAuth setup for `source:gmail`. We don't plan to add more in-tree connectors; if a future SPI gap surfaces (write-back, push subscriptions, etc.) we'll extend the SPI and update one of the reference implementations to cover it.
 
-For the day a Loamss contributor — or, eventually, a third-party ingestor capsule — adds a new connector. High level:
+## Adding a new source connector
 
-1. **Create a sub-package** under `internal/source/<name>/`.
-2. **Implement `source.Source`.** The interface in `runtime/internal/source/source.go` is small; the existing `gmail/` package is the reference.
-3. **Register in `init()`**:
-   ```go
-   func init() { source.Register("source:<name>", New) }
-   ```
-4. **Blank-import in `cmd/loamss/main.go`** so the registration runs at process startup.
-5. **Tests** with `httptest` mocks for the provider; do not contact the live API from CI.
-6. **Document** any provider-specific setup (OAuth client creation, scopes, quotas) under `docs/`.
+**The capsule ingestor role is the path.** See `capsule-spec.md` (the `ingestor` role) and [`docs/build-your-first-source-connector.md`](docs/build-your-first-source-connector.md). A capsule ingestor:
+
+- Implements the same lifecycle shape as `source.Source`, but as MCP-tool callbacks the runtime drives
+- Receives credentials via runtime-mediated MCP tools (no plaintext on disk; the runtime encrypts via the storage adapter)
+- Persists its cursor via the storage MCP tools under its own namespace
+- Gets scheduled the same way in-tree sources do (`loamss source sync` and the scheduler)
+
+If you're a contributor and find yourself wanting to add a connector to `runtime/internal/source/`, stop and ask first. The answer is almost certainly: ship it as an ingestor capsule.
 
 The first connector that pulls write-back capabilities (e.g. `source:gmail-send`) will need the spec extended — today everything assumes read-only. That extension is its own design discussion.
 

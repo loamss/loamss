@@ -49,10 +49,11 @@ loamss/
 │   ├── storage/             Drivers for storage backends
 │   ├── memory/              Drivers for vector / graph DBs
 │   └── model/               Drivers for model providers
-├── connectors/              Data ingestion adapters (Gmail, Calendar, etc.)
 ├── console/                 User-facing UI — Next.js
 └── registry/                Capsule marketplace backend
 ```
+
+Source connectors — the ingestion edge — live inside `runtime/internal/source/` as **SPI reference implementations only** (`source:files` no-auth, `source:gmail` OAuth). Catalogue growth happens in the marketplace as capsules under the `ingestor` role; see `capsule-spec.md`. There is no top-level `connectors/` directory and there shouldn't be one.
 
 Each top-level directory may have its own CLAUDE.md with subsystem-specific context (loaded lazily by Claude Code when working in that subtree).
 
@@ -111,6 +112,7 @@ Build tooling (planned, not yet present):
 - Capsules with implicit permissions. Every grant must be visible in the audit log.
 - Telemetry that phones home. If we ever want it, it's opt-in and goes through the same consent system as everything else.
 - Anything that makes the runtime hard to self-host. Single binary, no required cloud services.
+- **Provider-specific source connectors in the runtime tree.** The two existing in-tree connectors (`source:files`, `source:gmail`) exist as SPI reference implementations — one no-auth, one OAuth. Calendar, Drive, Slack, GitHub, and every connector after them ship as **capsules under the `ingestor` role**, not as new entries in `runtime/internal/source/`. Locking provider-specific code into the runtime fossilizes the catalogue and forces a runtime release for every new connector. The marketplace is the extension path.
 
 ## Where things are heading
 
