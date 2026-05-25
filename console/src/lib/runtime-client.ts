@@ -207,6 +207,99 @@ export type ConsoleInitResult =
 	| ConsoleInitError;
 
 /**
+ * Generate a pairing code so an external client (Claude Desktop,
+ * ChatGPT, a custom MCP tool) can redeem it via the runtime's
+ * /pair endpoint and become a paired Client row.
+ *
+ * The runtime caps the TTL at 1 hour from the dashboard; pass a
+ * `ttlSeconds` to request a shorter window. Empty TTL → engine
+ * default (10 minutes today).
+ */
+export type CreatePairingCodeResult =
+	| {
+			ok: true;
+			code: string;
+			clientName: string;
+			expiresAt: string;
+	  }
+	| { ok: false; reason: string };
+
+export async function createPairingCode(
+	clientName: string,
+	opts: { ttlSeconds?: number; baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<CreatePairingCodeResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(`${baseUrl}/console/clients/pair`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				client_name: clientName,
+				...(opts.ttlSeconds ? { ttl_seconds: opts.ttlSeconds } : {}),
+			}),
+			signal: opts.signal,
+		});
+		if (resp.ok) {
+			const body = (await resp.json()) as {
+				code: string;
+				client_name: string;
+				expires_at: string;
+			};
+			return {
+				ok: true,
+				code: body.code,
+				clientName: body.client_name,
+				expiresAt: body.expires_at,
+			};
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
+ * Revoke a paired client. The row remains in /console/state.clients
+ * (so the user can see what was revoked + when) but its bearer
+ * token is invalidated and all its grants are revoked.
+ */
+export type RevokeClientResult =
+	| { ok: true }
+	| { ok: false; kind: "not-found"; reason: string }
+	| { ok: false; kind: "error"; reason: string };
+
+export async function revokeClient(
+	id: string,
+	opts: { reason?: string; baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<RevokeClientResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/clients/${encodeURIComponent(id)}`,
+			{
+				method: "DELETE",
+				headers: { "Content-Type": "application/json" },
+				body: opts.reason ? JSON.stringify({ reason: opts.reason }) : "",
+				signal: opts.signal,
+			},
+		);
+		if (resp.ok) return { ok: true };
+		const reason = await extractError(resp);
+		if (resp.status === 404) return { ok: false, kind: "not-found", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
  * Resolve a pending approval. POST /console/approvals/{id}/approve
  * or /deny. The optional `note` field is persisted on the resolved
  * approval and emitted in the audit log.

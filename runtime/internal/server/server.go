@@ -231,6 +231,14 @@ func New(opts Options) *Server {
 	mux.HandleFunc("POST /console/approvals/{id}/approve", s.handleApprovalApprove)
 	mux.HandleFunc("POST /console/approvals/{id}/deny", s.handleApprovalDeny)
 
+	// Apps (paired clients). The dashboard generates pairing
+	// codes via /console/clients/pair and revokes via DELETE.
+	// The /pair endpoint above (where external clients redeem
+	// the code) is unchanged — these endpoints sit alongside it
+	// in the same auth model.
+	mux.HandleFunc("POST /console/clients/pair", s.handleClientPair)
+	mux.HandleFunc("DELETE /console/clients/{id}", s.handleClientRevoke)
+
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the
 		// pairing code IS the auth token for this one request).
