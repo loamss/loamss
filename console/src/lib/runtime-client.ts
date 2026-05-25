@@ -207,6 +207,156 @@ export type ConsoleInitResult =
 	| ConsoleInitError;
 
 /**
+ * Install a capsule from a filesystem path. The runtime parses the
+ * manifest, issues permission grants, copies code into <data_dir>/
+ * capsules/, and (when the host is wired) starts the subprocess.
+ *
+ * The 201 response carries the parsed manifest so the dashboard
+ * can render a permission-slip review modal immediately after the
+ * install completes.
+ */
+export interface CapsuleManifestSummary {
+	name: string;
+	version: string;
+	description?: string;
+	author?: string;
+	permissions: Array<{
+		capability: string;
+		scope?: Record<string, unknown>;
+		rationale?: string;
+		requires_user_approval: boolean;
+	}>;
+	tools?: Array<{ name: string; description?: string }>;
+}
+
+export type InstallCapsuleResult =
+	| {
+			ok: true;
+			capsule: {
+				id: string;
+				name: string;
+				version: string;
+				running: boolean;
+			};
+			grants: string[];
+			manifest: CapsuleManifestSummary;
+			note?: string;
+	  }
+	| { ok: false; kind: "conflict"; reason: string } // already installed
+	| { ok: false; kind: "rejected"; reason: string } // bad path / bad manifest
+	| { ok: false; kind: "error"; reason: string };
+
+export async function installCapsule(
+	path: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<InstallCapsuleResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(`${baseUrl}/console/capsules`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path }),
+			signal: opts.signal,
+		});
+		if (resp.ok) {
+			const body = (await resp.json()) as {
+				capsule: {
+					id: string;
+					name: string;
+					version: string;
+					running: boolean;
+				};
+				grants: string[];
+				manifest: CapsuleManifestSummary;
+				note?: string;
+			};
+			return {
+				ok: true,
+				capsule: body.capsule,
+				grants: body.grants,
+				manifest: body.manifest,
+				note: body.note,
+			};
+		}
+		const reason = await extractError(resp);
+		if (resp.status === 409) return { ok: false, kind: "conflict", reason };
+		if (resp.status === 400) return { ok: false, kind: "rejected", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+export type CapsuleLifecycleResult =
+	| { ok: true }
+	| { ok: false; kind: "not-found"; reason: string }
+	| { ok: false; kind: "error"; reason: string };
+
+export async function startCapsule(
+	name: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<CapsuleLifecycleResult> {
+	return capsuleAction(`/console/capsules/${encodeURIComponent(name)}/start`, opts);
+}
+
+export async function stopCapsule(
+	name: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<CapsuleLifecycleResult> {
+	return capsuleAction(`/console/capsules/${encodeURIComponent(name)}/stop`, opts);
+}
+
+export async function uninstallCapsule(
+	name: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<CapsuleLifecycleResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/capsules/${encodeURIComponent(name)}`,
+			{ method: "DELETE", signal: opts.signal },
+		);
+		if (resp.ok) return { ok: true };
+		const reason = await extractError(resp);
+		if (resp.status === 404) return { ok: false, kind: "not-found", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+async function capsuleAction(
+	path: string,
+	opts: { baseUrl?: string; signal?: AbortSignal },
+): Promise<CapsuleLifecycleResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(`${baseUrl}${path}`, {
+			method: "POST",
+			signal: opts.signal,
+		});
+		if (resp.ok) return { ok: true };
+		const reason = await extractError(resp);
+		if (resp.status === 404) return { ok: false, kind: "not-found", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
  * Snapshot returned by GET /console/state. Mirrors the Go-side
  * shape in runtime/internal/server/state.go. Every pane carries
  * an `available` flag so the dashboard tile can distinguish
