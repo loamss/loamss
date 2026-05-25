@@ -1,0 +1,38 @@
+spec_version: "0.1"
+
+name: hello-world-py
+version: 0.1.0
+
+description: "Reference Python capsule — says hello."
+
+author:
+  name: Loamss contributors
+  url: https://github.com/loamss/loamss
+
+# The runtime requires at least one declared permission per
+# capsule. The hello tool doesn't actually USE memory.read — it
+# only echoes a name back — but declaring something keeps the
+# manifest validator happy and serves as a worked example of the
+# permissions block for capsules that DO use it.
+permissions:
+  - capability: memory.read
+    rationale: "Placeholder. The hello tool doesn't actually read memory; declared to satisfy the manifest validator's 'at least one' rule."
+
+tools:
+  - name: hello
+    description: "Say hello to someone."
+    input_schema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Who to say hello to. Defaults to 'world'.
+      additionalProperties: false
+
+runtime:
+  type: subprocess
+  entrypoint: ["/Users/edima/Atlas/sdk/python/.venv/bin/python3", "src/main.py"]
+  protocol: mcp
+
+tags: [reference, example, python]
+license: Apache-2.0
