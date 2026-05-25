@@ -34,12 +34,20 @@ jobs:
           cache: true
           cache-dependency-path: runtime/go.sum
 
+      # Bun is needed because `make build` builds the embedded console
+      # (Next.js static export) before compiling the Go binary. Without
+      # bun, the Makefile's console-build target errors out.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Verify go.mod is tidy
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      - name: Build
+      - name: Build (Go + embedded console)
         run: make build
 
       - name: Test

@@ -32,7 +32,10 @@ import (
 	"github.com/loamss/loamss/runtime/internal/source"
 )
 
-var startShutdownTimeout time.Duration
+var (
+	startShutdownTimeout time.Duration
+	startAutoOpen        bool
+)
 
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -259,8 +262,66 @@ func runStart(cmd *cobra.Command, _ []string) error {
 			filepath.Join(cfg.Runtime.DataDir, "capsules")),
 	})
 
+	// Print the "open this URL" banner BEFORE the server starts
+	// listening. The bind is synchronous + fast (<10ms typical) so
+	// by the time the user has read the banner, ListenAndServe is
+	// already accepting connections.
+	printStartBanner(cmd.OutOrStdout(), cfg, consoleConfigPath, startAutoOpen)
+
 	stop := installSignalTrap(logger)
 	return runServer(srv, stop, startShutdownTimeout, logger)
+}
+
+// printStartBanner writes a friendly "where to point your browser"
+// message to stdout. On first run (no config file at the wizard's
+// target path) we print the full editorial banner — the user just
+// installed this and the wizard is the next step. On subsequent
+// runs we print a quieter one-line summary.
+//
+// When --open is set we also fire the browser launcher; failures
+// log a warning but don't block startup (the banner already showed
+// the URL, the user can navigate manually).
+func printStartBanner(w io.Writer, cfg *config.Config, configPath string, autoOpen bool) {
+	url := consoleURLFromListenAddr(cfg.Runtime.ListenAddr)
+	firstRun := !configFileExists(configPath)
+
+	if firstRun {
+		// Editorial first-run banner. Left-rail rather than full box
+		// so we don't have to align a right edge that varies with
+		// terminal character widths (em-dash, etc.). The blank lines
+		// give the URL room to breathe.
+		_, _ = fmt.Fprint(w, "\n")
+		_, _ = fmt.Fprintln(w, "  │")
+		_, _ = fmt.Fprintln(w, "  │  Loamss is starting up — first run.")
+		_, _ = fmt.Fprintln(w, "  │")
+		_, _ = fmt.Fprintln(w, "  │  Open this in your browser to set things up:")
+		_, _ = fmt.Fprintln(w, "  │")
+		_, _ = fmt.Fprintf(w, "  │      %s\n", url)
+		_, _ = fmt.Fprintln(w, "  │")
+		_, _ = fmt.Fprintln(w, "  │  Bound to 127.0.0.1 only. Nothing external reaches it")
+		_, _ = fmt.Fprintln(w, "  │  until you grant something. Press Ctrl-C to stop.")
+		_, _ = fmt.Fprintln(w, "  │")
+		_, _ = fmt.Fprint(w, "\n")
+	} else {
+		_, _ = fmt.Fprintf(w, "\n  ↪  Loamss running at %s\n", url)
+		_, _ = fmt.Fprintln(w, "  ↪  Press Ctrl-C to stop.")
+		_, _ = fmt.Fprint(w, "\n")
+	}
+
+	if autoOpen {
+		if err := launchBrowser(url); err != nil {
+			_, _ = fmt.Fprintf(w, "  (Couldn't launch browser: %s — open the URL above manually.)\n\n", err)
+		}
+	}
+}
+
+// configFileExists reports whether a config file lives at path.
+// Mirrors the wizard_complete signal /console/state exposes; the
+// startup banner uses it to decide between the editorial first-run
+// message and the quiet recurring-run message.
+func configFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // runServer launches the server in a goroutine, waits for either it to
@@ -452,5 +513,7 @@ func newLogger(cfg config.LogConfig, w io.Writer) *slog.Logger {
 func init() {
 	startCmd.Flags().DurationVar(&startShutdownTimeout, "shutdown-timeout", 5*time.Second,
 		"how long to wait for in-flight requests during graceful shutdown")
+	startCmd.Flags().BoolVar(&startAutoOpen, "open", false,
+		"launch the system browser at the console URL after starting (useful for first run)")
 	rootCmd.AddCommand(startCmd)
 }

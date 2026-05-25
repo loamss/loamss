@@ -140,22 +140,45 @@ Reference runtime (in `runtime/`):
 - ✅ HTTP listener with `/healthz`, `/version`, and the MCP surface
 - ✅ JSON-RPC 2.0 + SSE transport; bearer-token client auth
 - ✅ Hash-chained audit log (SQLite, WAL, `BEGIN IMMEDIATE`) + `Verify` pass
-- ✅ Permission engine with scope match primitives + grant store
+- ✅ Permission engine with scope match primitives + grant store + approval queue
 - ✅ Capsule host: subprocess + MCP-over-stdio + permission-gated callbacks
 - ✅ Storage adapter: `storage:fs-encrypted`
 - ✅ Memory adapter: `memory:sqlite` (with embedding-aware search)
+- ✅ Memory layer: entity + thread resolution above the adapter
 - ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
-- ✅ Source connector framework + first reference connector (`source:gmail`). The SPI is provider-agnostic — Gmail is the demonstration, not the design target
-- ✅ CLI: `init`, `doctor`, `start`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`, `source`
-- ✅ Capsule SDK (TypeScript) — `@loamss/sdk` in [`sdk/typescript/`](sdk/typescript/): MCP-over-stdio transport, tool registration, runtime-callback client, hello-world example
+- ✅ Source connector framework + two reference connectors (`source:files`, `source:gmail`). The SPI is provider-agnostic — these are demonstrations, not the design target
+- ✅ CLI: `init`, `doctor`, `start`, `open`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`, `source`
+- ✅ Console embedded in the runtime binary: first-run wizard + post-wizard dashboard, served at the runtime's listen address. Every dashboard pane (Sources, Capsules, Apps, Approvals, Activity) is interactive — install capsules, sync sources, approve grants, pair external clients without leaving the browser
+- ✅ Capsule SDK (TypeScript) — `@loamss/sdk` in [`sdk/typescript/`](sdk/typescript/): MCP-over-stdio transport, tool registration, runtime-callback client, hello-world + daily-brief reference capsules
+- ✅ MCP client library (TypeScript) — for Path-B apps pairing with a user's Loamss
 - ⏳ Additional source connectors (Calendar, Drive, Slack, GitHub)
-- ⏳ MCP client library (TypeScript) — for Path-B apps pairing with a user's Loamss
 - ⏳ Python SDK
-- ⏳ Console (Next.js)
-- ⏳ Capsule SDKs (TypeScript, Python)
 - ⏳ Additional adapters (s3, postgres, pgvector, openai, mistral)
+- ⏳ Config hot-reload (today: edits via wizard or file require a `loamss start` restart)
+- ⏳ Release binaries via GitHub Actions (today: build from source)
 
 See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
+
+## Try it locally
+
+You need Go 1.22+ and [Bun](https://bun.sh) (Bun is used to build the embedded console UI; the runtime itself is pure Go).
+
+```bash
+git clone https://github.com/loamss/loamss
+cd loamss/runtime
+make build         # bun build (console) + go build (runtime)
+./bin/loamss start --open
+```
+
+The `--open` flag launches your browser at the runtime's URL after the daemon starts. On a fresh install you land on the three-minute first-run wizard (Welcome → Storage → Memory → Models → Connect → Done); subsequent runs land on the dashboard.
+
+Three things to try once you're in:
+
+1. **Add a source.** In the dashboard's Sources pane click `+ Add source`, point it at a directory full of Markdown (`~/Documents` works), and watch the memory layer fill up.
+2. **Install a capsule.** Click `+ Install capsule` and paste `sdk/typescript/examples/daily-brief` from the cloned repo. The runtime issues its permission grants and shows the slip.
+3. **Pair an app.** Click `+ Pair an app`, give it a name, copy the code into any MCP-speaking client (Claude Desktop, your own script via `@loamss/sdk`), and watch the audit feed light up as it reads.
+
+When you're done, `loamss export` produces a complete archive of your storage, memory, and audit history. Point another runtime at it or keep the archive — nothing is held hostage.
 
 ## Reading order, depending on who you are
 

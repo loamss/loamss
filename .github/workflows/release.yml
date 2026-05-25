@@ -1,0 +1,162 @@
+name: Release
+
+# Builds release binaries for macOS (arm64, amd64) and Linux
+# (arm64, amd64) and attaches them to a GitHub Release. Triggers on
+# any tag matching v* (e.g. v0.1.0, v1.0.0-rc1).
+#
+# Architecture: one job builds the console (Next.js static export)
+# once, since the output is platform-independent. A matrix job then
+# cross-compiles the Go binary for every target, embedding the same
+# console bundle into each. This is simpler than running bun on
+# every matrix node and keeps the dist/ embed deterministic across
+# architectures.
+#
+# Security note: every shell `run:` step uses runner-set env vars
+# (GITHUB_REF, GITHUB_SHA) or git commands, never user-controlled
+# event payload fields. Any future change that needs github.event
+# data should be passed via the env: block, not interpolated into
+# run: directly.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # required for softprops/action-gh-release to create a Release
+
+jobs:
+  build-console:
+    name: build console bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build console
+        working-directory: console
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      # Upload the static export so the per-target build jobs can
+      # embed it. Going through an artifact (vs. each job re-running
+      # bun) guarantees byte-for-byte identical embeds across the
+      # release matrix.
+      - name: Upload console bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-out
+          path: console/out/
+          retention-days: 1
+
+  build-binaries:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: build-console
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: runtime/go.sum
+
+      - name: Restore console bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: console-out
+          path: runtime/internal/console/dist
+
+      - name: Build binary
+        working-directory: runtime
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          # GITHUB_REF is set by the runner from the actual git ref
+          # (refs/tags/vX.Y.Z); GITHUB_SHA is the commit SHA. Both
+          # are runner-set, not from user input.
+          VERSION="${GITHUB_REF#refs/tags/}"
+          COMMIT="${GITHUB_SHA:0:7}"
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          OUT="loamss-${VERSION}-${GOOS}-${GOARCH}"
+          mkdir -p ../dist
+          # Re-create the .gitkeep marker the Makefile would leave;
+          # not strictly needed for the build, just hygiene.
+          touch internal/console/dist/.gitkeep
+          go build \
+            -trimpath \
+            -ldflags "-s -w \
+              -X github.com/loamss/loamss/runtime/internal/cli.version=${VERSION} \
+              -X github.com/loamss/loamss/runtime/internal/cli.commit=${COMMIT} \
+              -X github.com/loamss/loamss/runtime/internal/cli.buildDate=${BUILD_DATE}" \
+            -o "../dist/${OUT}/loamss" \
+            ./cmd/loamss
+          # Package the binary alongside its license + a short README
+          # so the tarball is self-explanatory.
+          cp ../LICENSE "../dist/${OUT}/"
+          cp ../README.md "../dist/${OUT}/"
+          cd ../dist
+          tar -czf "${OUT}.tar.gz" "${OUT}/"
+          # Checksum for verification by the user.
+          shasum -a 256 "${OUT}.tar.gz" > "${OUT}.tar.gz.sha256"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: loamss-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/loamss-*-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            dist/loamss-*-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+          retention-days: 7
+
+  release:
+    name: publish release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: loamss-*
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Auto-generate release notes from commit messages between
+          # the previous tag and this one. We can override later by
+          # writing CHANGELOG.md entries.
+          generate_release_notes: true
+          files: |
+            dist/loamss-*.tar.gz
+            dist/loamss-*.tar.gz.sha256
+          # Mark prerelease for any tag containing a hyphen (v0.1.0-rc1, etc.)
+          prerelease: ${{ contains(github.ref_name, '-') }}
