@@ -23,10 +23,12 @@ import (
 	"time"
 
 	"github.com/loamss/loamss/runtime/internal/audit"
+	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/console"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	"github.com/loamss/loamss/runtime/internal/permission"
+	"github.com/loamss/loamss/runtime/internal/source"
 )
 
 // Options configures a new Server.
@@ -77,6 +79,20 @@ type Options struct {
 	// (rather than being reset to library defaults). Optional;
 	// when nil the handler falls back to config.Default().
 	BaseConfig *config.Config
+
+	// Sources is the source registry. Optional; when nil, the
+	// /console/state endpoint omits the sources pane.
+	Sources *source.Store
+
+	// Capsules is the capsule registry (installed capsules). Optional;
+	// when nil, /console/state omits the capsules pane.
+	Capsules *capsule.Store
+
+	// Host is the capsule subprocess host, used to determine which
+	// installed capsules are currently running. Optional; when nil,
+	// /console/state reports installed capsules without a running
+	// flag.
+	Host *capsule.Host
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -102,6 +118,18 @@ type Server struct {
 	// listen_addr, redaction_level, etc.). nil → handler falls back
 	// to config.Default().
 	baseConfig *config.Config
+
+	// Dependencies read by /console/state. All optional — when nil
+	// the corresponding dashboard pane is reported as unavailable so
+	// the console can render a graceful "not yet wired" tile rather
+	// than a stack trace.
+	sources  *source.Store
+	capsules *capsule.Store
+	host     *capsule.Host
+
+	// startedAt is the process start time, used to compute the
+	// runtime uptime advertised in /console/state.
+	startedAt time.Time
 }
 
 // New constructs a Server. The HTTP listener is not bound until
@@ -120,6 +148,10 @@ func New(opts Options) *Server {
 		audit:      opts.Audit,
 		configPath: opts.ConfigPath,
 		baseConfig: opts.BaseConfig,
+		sources:    opts.Sources,
+		capsules:   opts.Capsules,
+		host:       opts.Host,
+		startedAt:  time.Now().UTC(),
 	}
 
 	mux := http.NewServeMux()
@@ -134,6 +166,13 @@ func New(opts Options) *Server {
 	// endpoint takes no auth because the wizard runs before any client
 	// has been paired.
 	mux.HandleFunc("POST /console/init", s.handleConsoleInit)
+
+	// /console/state — read-only snapshot the dashboard reads on
+	// load + refresh. Same unauthenticated-localhost contract as
+	// /console/init: the runtime defaults to binding 127.0.0.1 only,
+	// and the dashboard runs in the same browser session the user
+	// just used to write the config — no token to negotiate.
+	mux.HandleFunc("GET /console/state", s.handleConsoleState)
 
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the

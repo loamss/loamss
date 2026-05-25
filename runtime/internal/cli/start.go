@@ -27,6 +27,7 @@ import (
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/server"
+	"github.com/loamss/loamss/runtime/internal/source"
 )
 
 var startShutdownTimeout time.Duration
@@ -194,6 +195,17 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
+	// Source registry — shares runtime.db with the permission and
+	// capsule stores. Opened here (in addition to the source CLI's
+	// own open) so /console/state can list configured sources. Both
+	// opens point at the same SQLite file; sqlite handles concurrent
+	// readers and the writer mutex sits inside the store itself.
+	srcStore, err := source.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return fmt.Errorf("opening source store: %w", err)
+	}
+	defer func() { _ = srcStore.Close() }()
+
 	// Resolve where /console/init should write the wizard's payload.
 	// Honor --config if the user gave one (so the wizard updates the
 	// file the daemon is actually reading), otherwise fall back to
@@ -213,6 +225,9 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		Resources:  resources,
 		ConfigPath: consoleConfigPath,
 		BaseConfig: cfg,
+		Sources:    srcStore,
+		Capsules:   capStore,
+		Host:       host,
 	})
 
 	stop := installSignalTrap(logger)
