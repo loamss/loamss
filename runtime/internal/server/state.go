@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
+	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
@@ -74,6 +77,17 @@ type consoleConfigSummary struct {
 	StorageAdapter string   `json:"storage_adapter,omitempty"`
 	MemoryAdapter  string   `json:"memory_adapter,omitempty"`
 	ModelAdapters  []string `json:"model_adapters,omitempty"`
+
+	// WizardComplete reports whether the configured path has an
+	// actual file on disk. False means the runtime is running
+	// against library defaults (or env overrides) but no user
+	// has accepted the setup yet. The console uses this to decide
+	// whether to land on the dashboard or the wizard — `available`
+	// + populated adapter fields are always true once BaseConfig
+	// is wired (defaults populate them), so they're a poor "first
+	// run completed" signal on their own.
+	WizardComplete bool   `json:"wizard_complete"`
+	WizardPath     string `json:"wizard_path,omitempty"`
 }
 
 type consoleSourcesBlock struct {
@@ -155,6 +169,27 @@ type consoleActivity struct {
 	Outcome     string `json:"outcome"`
 }
 
+// consoleConfigPath resolves where the wizard would write — either
+// the path the daemon was launched with (via --config) or the
+// library default. Centralised here so wizardConfigPresent and the
+// /console/init handler can't drift.
+func (s *Server) consoleConfigPath() string {
+	if s.configPath != "" {
+		return s.configPath
+	}
+	return config.DefaultPath()
+}
+
+// wizardConfigPresent reports whether an actual file exists at the
+// wizard's target path. This is the honest signal for "has the
+// user completed setup?" — distinct from "do we have a working
+// config?", which is true the moment the runtime starts (defaults
+// populate every required field).
+func (s *Server) wizardConfigPresent() bool {
+	_, err := os.Stat(s.consoleConfigPath())
+	return err == nil || !errors.Is(err, os.ErrNotExist)
+}
+
 // activityFetchLimit caps how many recent audit events we surface
 // to the dashboard. Twenty is enough to fill the pane without
 // pulling so many rows that the SQLite query becomes a footgun
@@ -182,6 +217,8 @@ func (s *Server) handleConsoleState(w http.ResponseWriter, r *http.Request) {
 			Available:      true,
 			StorageAdapter: s.baseConfig.Storage.Adapter,
 			MemoryAdapter:  s.baseConfig.Memory.Adapter,
+			WizardComplete: s.wizardConfigPresent(),
+			WizardPath:     s.consoleConfigPath(),
 		}
 		for _, m := range s.baseConfig.Models {
 			resp.Config.ModelAdapters = append(resp.Config.ModelAdapters, m.Adapter)

@@ -207,6 +207,124 @@ export type ConsoleInitResult =
 	| ConsoleInitError;
 
 /**
+ * Snapshot returned by GET /console/state. Mirrors the Go-side
+ * shape in runtime/internal/server/state.go. Every pane carries
+ * an `available` flag so the dashboard tile can distinguish
+ * "subsystem not wired in this build" from "wired but empty".
+ */
+export interface ConsoleState {
+	generated_at: string;
+	runtime: {
+		version: string;
+		listen_addr: string;
+		data_dir: string;
+		started_at: string;
+		uptime_seconds: number;
+	};
+	config: {
+		available: boolean;
+		storage_adapter?: string;
+		memory_adapter?: string;
+		model_adapters?: string[];
+		// True iff a config file exists at the wizard's target path.
+		// The dashboard routes off this — `available` is true the
+		// moment the daemon starts (defaults populate every field).
+		wizard_complete: boolean;
+		wizard_path?: string;
+	};
+	sources: {
+		available: boolean;
+		items: Array<{
+			id: string;
+			name: string;
+			adapter: string;
+			last_sync_at?: string;
+			last_sync_status: string; // "success" | "error" | "running" | ""
+			summary?: Record<string, unknown>;
+			added_at: string;
+		}>;
+		error?: string;
+	};
+	capsules: {
+		available: boolean;
+		items: Array<{
+			id: string;
+			name: string;
+			version: string;
+			author?: string;
+			permissions: string[];
+			installed_at: string;
+			running: boolean;
+		}>;
+		error?: string;
+	};
+	clients: {
+		available: boolean;
+		items: Array<{
+			id: string;
+			name: string;
+			paired_at: string;
+			last_seen_at?: string;
+			active: boolean;
+		}>;
+		error?: string;
+	};
+	approvals_pending: {
+		available: boolean;
+		items: Array<{
+			id: string;
+			principal_kind: string;
+			principal_id: string;
+			capability: string;
+			rationale?: string;
+			scope?: Record<string, unknown>;
+			requested_at: string;
+		}>;
+		error?: string;
+	};
+	activity: {
+		available: boolean;
+		items: Array<{
+			id: string;
+			at: string;
+			type: string;
+			actor_kind: string;
+			actor_id: string;
+			subject_kind?: string;
+			subject_id?: string;
+			outcome: string; // "success" | "denied" | "error" | "pending" | "n/a"
+		}>;
+		error?: string;
+	};
+}
+
+/**
+ * Fetch the dashboard snapshot. Returns null when the runtime is
+ * unreachable so the caller can render an offline state rather
+ * than a crash. Real errors (4xx/5xx from a reachable runtime)
+ * also collapse to null with a console.warn — by the time we're
+ * past first-run, the dashboard's job is to surface state, not
+ * to interpret HTTP semantics.
+ */
+export async function getConsoleState(
+	baseUrl: string = DEFAULT_RUNTIME_URL,
+	opts: { signal?: AbortSignal } = {},
+): Promise<ConsoleState | null> {
+	try {
+		const resp = await fetch(`${baseUrl}/console/state`, {
+			signal: opts.signal,
+		});
+		if (!resp.ok) {
+			console.warn(`/console/state returned HTTP ${resp.status}`);
+			return null;
+		}
+		return (await resp.json()) as ConsoleState;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * POST the wizard's collected config to the runtime. The runtime
  * atomically writes a YAML config file and returns where it landed +
  * a "restart the runtime to apply" hint. Re-runs against an existing
