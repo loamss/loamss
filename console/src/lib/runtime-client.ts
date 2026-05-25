@@ -325,6 +325,140 @@ export async function getConsoleState(
 }
 
 /**
+ * Add a source via POST /console/sources. The runtime validates the
+ * adapter config by constructing a real source.Source instance and
+ * Init'ing it; if Init fails, the inserted row is rolled back and
+ * the response is 400.
+ *
+ * Error shape mirrors the discriminated unions used elsewhere in
+ * this file (ConsoleInitResult): callers branch on `ok` and `kind`.
+ */
+export type AddSourceResult =
+	| {
+			ok: true;
+			source: {
+				id: string;
+				name: string;
+				adapter: string;
+				added_at: string;
+			};
+	  }
+	| { ok: false; kind: "conflict"; reason: string } // 409 — name taken
+	| { ok: false; kind: "rejected"; reason: string } // 400 — adapter init failed
+	| { ok: false; kind: "error"; status?: number; reason: string };
+
+export async function addSource(
+	payload: { adapter: string; name: string; config: Record<string, unknown> },
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<AddSourceResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(`${baseUrl}/console/sources`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+			signal: opts.signal,
+		});
+		if (resp.ok) {
+			const body = (await resp.json()) as {
+				source: { id: string; name: string; adapter: string; added_at: string };
+			};
+			return { ok: true, source: body.source };
+		}
+		const reason = await extractError(resp);
+		if (resp.status === 409) return { ok: false, kind: "conflict", reason };
+		if (resp.status === 400) return { ok: false, kind: "rejected", reason };
+		return { ok: false, kind: "error", status: resp.status, reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
+ * Trigger an async sync. Returns 202 on success; the actual outcome
+ * lands in the source's `last_sync_status` field, polled via
+ * /console/state.
+ */
+export type SyncSourceResult =
+	| { ok: true }
+	| { ok: false; kind: "conflict"; reason: string } // 409 — already running
+	| { ok: false; kind: "not-found"; reason: string } // 404
+	| { ok: false; kind: "error"; reason: string };
+
+export async function syncSource(
+	name: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<SyncSourceResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/sources/${encodeURIComponent(name)}/sync`,
+			{ method: "POST", signal: opts.signal },
+		);
+		if (resp.ok) return { ok: true };
+		const reason = await extractError(resp);
+		if (resp.status === 409) return { ok: false, kind: "conflict", reason };
+		if (resp.status === 404) return { ok: false, kind: "not-found", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
+ * Remove a source. The runtime also clears the source's per-instance
+ * credential blob from storage; orphaned credentials are a minor
+ * cleanup issue at worst.
+ */
+export type DeleteSourceResult =
+	| { ok: true }
+	| { ok: false; kind: "not-found"; reason: string }
+	| { ok: false; kind: "error"; reason: string };
+
+export async function deleteSource(
+	name: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<DeleteSourceResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/sources/${encodeURIComponent(name)}`,
+			{ method: "DELETE", signal: opts.signal },
+		);
+		if (resp.ok) return { ok: true };
+		const reason = await extractError(resp);
+		if (resp.status === 404) return { ok: false, kind: "not-found", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+// extractError best-efforts the runtime's JSON error message, falling
+// back to a generic "HTTP N" if the response body isn't structured.
+async function extractError(resp: Response): Promise<string> {
+	try {
+		const body = (await resp.json()) as { error?: string };
+		if (body.error) return body.error;
+	} catch {
+		/* not JSON */
+	}
+	return `HTTP ${resp.status}`;
+}
+
+/**
  * POST the wizard's collected config to the runtime. The runtime
  * atomically writes a YAML config file and returns where it landed +
  * a "restart the runtime to apply" hint. Re-runs against an existing
