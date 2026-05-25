@@ -223,6 +223,14 @@ func New(opts Options) *Server {
 	mux.HandleFunc("POST /console/capsules/{name}/start", s.handleCapsuleStart)
 	mux.HandleFunc("POST /console/capsules/{name}/stop", s.handleCapsuleStop)
 
+	// Approval workflow. The runtime holds capability checks that
+	// resolve to "needs human OK" in a pending state; these
+	// endpoints are how the user makes a decision from the
+	// dashboard. The design's most important surface — making it
+	// one-click was the point of the dashboard.
+	mux.HandleFunc("POST /console/approvals/{id}/approve", s.handleApprovalApprove)
+	mux.HandleFunc("POST /console/approvals/{id}/deny", s.handleApprovalDeny)
+
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the
 		// pairing code IS the auth token for this one request).

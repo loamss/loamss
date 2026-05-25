@@ -207,6 +207,57 @@ export type ConsoleInitResult =
 	| ConsoleInitError;
 
 /**
+ * Resolve a pending approval. POST /console/approvals/{id}/approve
+ * or /deny. The optional `note` field is persisted on the resolved
+ * approval and emitted in the audit log.
+ *
+ * Returns ok=true on success. The "conflict" kind covers the race
+ * where two deciders click at once (or a single user double-clicks)
+ * — the dashboard should refresh state when it sees one.
+ */
+export type ResolveApprovalResult =
+	| { ok: true; decision: "granted" | "denied" }
+	| { ok: false; kind: "conflict"; reason: string }
+	| { ok: false; kind: "not-found"; reason: string }
+	| { ok: false; kind: "error"; reason: string };
+
+export async function resolveApproval(
+	id: string,
+	decision: "approve" | "deny",
+	opts: { note?: string; baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<ResolveApprovalResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/approvals/${encodeURIComponent(id)}/${decision}`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: opts.note ? JSON.stringify({ note: opts.note }) : "",
+				signal: opts.signal,
+			},
+		);
+		if (resp.ok) {
+			const body = (await resp.json()) as { decision: string };
+			return {
+				ok: true,
+				decision: body.decision === "granted" ? "granted" : "denied",
+			};
+		}
+		const reason = await extractError(resp);
+		if (resp.status === 409) return { ok: false, kind: "conflict", reason };
+		if (resp.status === 404) return { ok: false, kind: "not-found", reason };
+		return { ok: false, kind: "error", reason };
+	} catch (err) {
+		return {
+			ok: false,
+			kind: "error",
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/**
  * Install a capsule from a filesystem path. The runtime parses the
  * manifest, issues permission grants, copies code into <data_dir>/
  * capsules/, and (when the host is wired) starts the subprocess.
