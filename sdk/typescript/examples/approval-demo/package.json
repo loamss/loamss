@@ -1,0 +1,14 @@
+{
+  "name": "@loamss/example-approval-demo",
+  "version": "0.1.0",
+  "description": "Reference capsule that triggers a user-approval flow on every invocation.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/index.ts --outdir=dist --target=bun",
+    "start": "bun run dist/index.js",
+    "dev": "bun run src/index.ts",
+    "typecheck": "bun tsc --noEmit",
+    "prepublish": "bun run build"
+  }
+}

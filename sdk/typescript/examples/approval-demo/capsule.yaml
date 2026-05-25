@@ -1,0 +1,76 @@
+# approval-demo — reference capsule that exercises the user-approval flow.
+#
+# Most capsules declare permissions with default grants — install
+# once, the runtime issues the grant, every subsequent call goes
+# through without interrupting the user. That's the right default
+# for capabilities the user already understands ("read my notes",
+# "send to my own bucket").
+#
+# Some capabilities WANT a human in the loop on every invocation:
+# "send this email", "post this video", "spend this money". The
+# manifest can flag a permission with `requires_user_approval: true`
+# and the runtime queues an approval each time the capability is
+# checked.
+#
+# This capsule demonstrates the second pattern. The `peek` tool
+# calls memory.read; the permission is flagged for user approval.
+# Every invocation pauses for a human OK in the dashboard's
+# Approvals pane. The capsule surfaces the pending state cleanly
+# so the caller knows what to do.
+#
+# Demo path (see README.md for the full walk-through):
+#
+#   1. Install this capsule via the dashboard's Capsules pane.
+#   2. Pair an external client via the Apps pane (you'll get a code
+#      + bearer token).
+#   3. Use that client to call approval-demo.peek.
+#   4. The dashboard's Approvals pane lights up; the capsule's
+#      response says "pending — approve in dashboard".
+#   5. Click Approve.
+#   6. Re-invoke approval-demo.peek; this time it returns the
+#      thread list it was trying to fetch.
+
+spec_version: "0.1"
+
+name: approval-demo
+version: 0.1.0
+
+author:
+  name: Loamss contributors
+  url: https://github.com/loamss/loamss
+
+description: |
+  Reference capsule demonstrating the runtime's user-approval flow:
+  declares memory.read with requires_user_approval=true, so every
+  call pauses for a human OK in the dashboard.
+
+permissions:
+  - capability: memory.read
+    rationale: |
+      The peek tool lists the user's recent threads. We mark this
+      requires_user_approval=true so EVERY invocation pauses for
+      explicit OK in the dashboard — demonstrating the approval
+      workflow even though memory.read normally runs without
+      per-call approval.
+    requires_user_approval: true
+
+tools:
+  - name: peek
+    description: "List the user's recent threads — pauses for approval each time."
+    input_schema:
+      type: object
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 20
+          description: How many threads to peek at. Default 5.
+      additionalProperties: false
+
+runtime:
+  type: subprocess
+  entrypoint: ["bun", "run", "dist/index.js"]
+  protocol: mcp
+
+tags: [reference, example, approval]
+license: Apache-2.0

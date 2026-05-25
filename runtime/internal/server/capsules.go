@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -115,9 +116,17 @@ func (s *Server) handleCapsuleInstall(w http.ResponseWriter, r *http.Request) {
 	// runtime is configured to auto-start on Host.Start, the row
 	// might already be running; either way, post-install starts
 	// match user expectation (you installed it to use it).
+	//
+	// IMPORTANT: we MUST NOT pass the request ctx through to
+	// StartOne. The capsule subprocess is spawned with
+	// exec.CommandContext(ctx, ...) — its lifetime would be tied to
+	// the HTTP request and the subprocess would be killed the
+	// moment we returned a response. Use context.Background() so
+	// the capsule's lifetime tracks the daemon's, matching the
+	// invariant Host.Start (batch) already relies on.
 	startedNote := ""
 	if s.host != nil {
-		if err := s.host.StartOne(ctx, *result.Capsule); err != nil {
+		if err := s.host.StartOne(context.Background(), *result.Capsule); err != nil {
 			s.logger.Warn("console capsule install: post-install start failed",
 				"err", err, "name", result.Capsule.Name)
 			startedNote = "installed; auto-start failed (" + err.Error() + ")"
@@ -252,7 +261,10 @@ func (s *Server) handleCapsuleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.host.StartOne(ctx, *c); err != nil {
+	// Same context-lifetime concern as in install: passing the
+	// request ctx would tie the spawned subprocess's lifetime to
+	// the HTTP request and kill it on response. Use background().
+	if err := s.host.StartOne(context.Background(), *c); err != nil {
 		// StartOne is idempotent on already-running capsules — any
 		// error here is a real failure (subprocess spawn, MCP
 		// handshake). Surface verbatim; the dashboard renders it
