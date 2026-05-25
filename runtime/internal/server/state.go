@@ -88,6 +88,15 @@ type consoleConfigSummary struct {
 	// run completed" signal on their own.
 	WizardComplete bool   `json:"wizard_complete"`
 	WizardPath     string `json:"wizard_path,omitempty"`
+
+	// RestartRequired lists the schema paths whose value on disk
+	// differs from the live in-memory config. Populated by diffing
+	// the file at WizardPath against baseConfig on every request.
+	// Non-empty means: someone (the wizard, a hand-edit of the
+	// YAML) changed config since the daemon started, and the
+	// daemon hasn't picked it up. The dashboard renders a
+	// "restart needed" banner in that case.
+	RestartRequired []config.FieldChange `json:"restart_required,omitempty"`
 }
 
 type consoleSourcesBlock struct {
@@ -180,6 +189,35 @@ func (s *Server) consoleConfigPath() string {
 	return config.DefaultPath()
 }
 
+// detectRestartRequired diffs the file on disk against the live
+// baseConfig and returns the fields that need a restart to take
+// effect. Empty when no file exists, no baseConfig is wired, or
+// the file matches the live config.
+//
+// Errors reading the file are logged at debug level and treated
+// as "no diff" — a missing/unreadable file shouldn't pollute the
+// dashboard's state response. The wizard's wizard_complete
+// signal handles the "no file" case separately.
+func (s *Server) detectRestartRequired() []config.FieldChange {
+	if s.baseConfig == nil {
+		return nil
+	}
+	path := s.consoleConfigPath()
+	if _, err := os.Stat(path); err != nil {
+		return nil // no file → nothing to diff against
+	}
+	onDisk, err := config.Load(path)
+	if err != nil {
+		s.logger.Debug("console state: config load for diff failed", "err", err, "path", path)
+		return nil
+	}
+	diff := config.Diff(s.baseConfig, onDisk)
+	if len(diff.RestartRequired) == 0 {
+		return nil
+	}
+	return diff.RestartRequired
+}
+
 // wizardConfigPresent reports whether an actual file exists at the
 // wizard's target path. This is the honest signal for "has the
 // user completed setup?" — distinct from "do we have a working
@@ -214,11 +252,12 @@ func (s *Server) handleConsoleState(w http.ResponseWriter, r *http.Request) {
 	if s.baseConfig != nil {
 		resp.Runtime.DataDir = s.baseConfig.Runtime.DataDir
 		resp.Config = consoleConfigSummary{
-			Available:      true,
-			StorageAdapter: s.baseConfig.Storage.Adapter,
-			MemoryAdapter:  s.baseConfig.Memory.Adapter,
-			WizardComplete: s.wizardConfigPresent(),
-			WizardPath:     s.consoleConfigPath(),
+			Available:       true,
+			StorageAdapter:  s.baseConfig.Storage.Adapter,
+			MemoryAdapter:   s.baseConfig.Memory.Adapter,
+			WizardComplete:  s.wizardConfigPresent(),
+			WizardPath:      s.consoleConfigPath(),
+			RestartRequired: s.detectRestartRequired(),
 		}
 		for _, m := range s.baseConfig.Models {
 			resp.Config.ModelAdapters = append(resp.Config.ModelAdapters, m.Adapter)

@@ -260,6 +260,26 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		SourceBuildEnv: sourceBuildEnv,
 		CapsuleInstaller: capsule.NewInstaller(capStore, engine, auditWriter,
 			filepath.Join(cfg.Runtime.DataDir, "capsules")),
+		// ReloadLog: hot-swap the daemon's slog handler when the
+		// wizard writes a config with new log.level / log.format.
+		// Subsystems with their own logger refs (engine, audit,
+		// capsule host) keep their startup logger — they would
+		// need to be rewired to pick up the new config, which is
+		// a separate refactor. For now, the runtime's top-level
+		// logger picks up the new settings immediately and most
+		// log lines flow through it.
+		ReloadLog: func(newLog config.LogConfig) error {
+			next := newLogger(newLog, cmd.ErrOrStderr())
+			logger.Info("log config reloaded", "level", newLog.Level, "format", newLog.Format)
+			// Replace the logger value behind the pointer via
+			// slog's standard "default" indirection. We use the
+			// process-wide default so any subsystem that calls
+			// slog.Default() picks up the new handler. Subsystems
+			// holding explicit *slog.Logger references keep their
+			// old config — that's the limitation we document.
+			slog.SetDefault(next)
+			return nil
+		},
 	})
 
 	// Print the "open this URL" banner BEFORE the server starts

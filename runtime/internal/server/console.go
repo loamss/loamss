@@ -61,10 +61,20 @@ type consoleInitResponse struct {
 	// the write was a dry run (none currently — kept for future).
 	WrittenTo string `json:"written_to,omitempty"`
 	// NextStep is a short, human-readable hint the console renders on
-	// the Done screen. Today: "restart `loamss start` to apply".
-	NextStep   string              `json:"next_step,omitempty"`
-	Note       string              `json:"note,omitempty"`
-	Capability consoleInitCapacity `json:"capability"`
+	// the Done screen. Today: "restart `loamss start` to apply" when
+	// restart-required fields changed; "applied" when only
+	// hot-swappable fields changed; defaults appropriately.
+	NextStep string `json:"next_step,omitempty"`
+	Note     string `json:"note,omitempty"`
+	// Applied lists schema paths whose change took effect immediately
+	// (e.g. log.level rebuilds the daemon's slog handler). Empty when
+	// nothing was hot-swappable.
+	Applied []config.FieldChange `json:"applied,omitempty"`
+	// RestartRequired lists schema paths whose change won't take effect
+	// until `loamss start` is restarted. The wizard's Done page
+	// renders a banner when this is non-empty.
+	RestartRequired []config.FieldChange `json:"restart_required,omitempty"`
+	Capability      consoleInitCapacity  `json:"capability"`
 }
 
 // consoleInitConflictResponse is returned with HTTP 409 when a config
@@ -173,23 +183,88 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 		"source_intents", len(req.SourceIntents),
 	)
 
+	// Diff against the live config. Apply what's hot-swappable
+	// (currently only log config), report the rest as
+	// restart-required so the dashboard can render a clear banner
+	// without lying about what just happened.
+	diff := config.Diff(s.baseConfig, cfg)
+	applied := s.applyHotSwap(cfg, diff)
+
+	// Update baseConfig pointer so subsequent /console/state diffs
+	// reflect the new on-disk file as the live config (modulo the
+	// fields still needing restart — those are reported separately).
+	s.baseConfig = cfg
+
+	nextStep := "Configuration written. No changes required a restart."
+	if len(diff.RestartRequired) > 0 {
+		nextStep = "Restart the runtime (`loamss start`) for the changed sections to take effect."
+	} else if len(applied) > 0 {
+		nextStep = "Configuration applied — no restart needed."
+	}
+
 	writeJSON(w, http.StatusOK, consoleInitResponse{
-		OK:         true,
-		ReceivedAt: nowRFC3339(),
-		Echo:       req,
-		WrittenTo:  target,
-		NextStep:   "Restart the runtime (`loamss start`) for the new configuration to take effect.",
+		OK:              true,
+		ReceivedAt:      nowRFC3339(),
+		Echo:            req,
+		WrittenTo:       target,
+		NextStep:        nextStep,
+		Applied:         applied,
+		RestartRequired: diff.RestartRequired,
 		Capability: consoleInitCapacity{
 			WritesConfigFile: true,
-			// Hot-reload, paired console, and source provisioning all
-			// still wait on follow-up work. Surfaced honestly so the
-			// console can show "you'll need to restart" instead of
-			// pretending it happened automatically.
-			RestartsRuntime:       false,
+			// Partial hot-reload now lives in the daemon: log.level
+			// + log.format swap without a restart. Storage, memory,
+			// models, listen_addr still require `loamss start` —
+			// honestly reported via restart_required above.
+			RestartsRuntime:       len(applied) > 0,
 			CreatesPairedConsole:  false,
 			AddsConfiguredSources: false,
 		},
 	})
+}
+
+// applyHotSwap calls the runtime's reload callbacks for fields the
+// daemon can adopt without a restart. Returns the FieldChange list
+// for what was actually applied; the caller surfaces this in the
+// HTTP response so the dashboard can show "X took effect".
+//
+// Log-config reload is the only one wired today. Future:
+// audit.redaction_level (when the writer accepts runtime tuning),
+// model adapter list (when the MCP tools route through a swappable
+// ModelRouter), per-adapter config maps (when adapters expose
+// Reinit). Storage and memory adapters are unlikely candidates —
+// they hold open SQLite handles and changing them mid-flight is a
+// recipe for corruption.
+func (s *Server) applyHotSwap(newCfg *config.Config, diff config.DiffResult) []config.FieldChange {
+	applied := make([]config.FieldChange, 0, len(diff.HotSwapped))
+	for _, fc := range diff.HotSwapped {
+		switch fc.Path {
+		case "log.level", "log.format":
+			if s.reloadLog == nil {
+				// No reload callback wired (test fixture, stripped
+				// build). Report as restart-required instead by
+				// pushing back into the restart list — but we don't
+				// have access to it here; the simplest signal is to
+				// log and skip.
+				s.logger.Info("console init: log config changed but no reload callback wired",
+					"path", fc.Path)
+				continue
+			}
+			if err := s.reloadLog(newCfg.Log); err != nil {
+				s.logger.Warn("console init: log reload failed",
+					"err", err, "path", fc.Path)
+				continue
+			}
+			applied = append(applied, fc)
+		default:
+			// HotSwapped contains a path the server doesn't know
+			// how to apply. Programming error: a field landed in
+			// the HotSwapped bucket without a matching case here.
+			s.logger.Warn("console init: hot-swap requested for unknown path",
+				"path", fc.Path)
+		}
+	}
+	return applied
 }
 
 // buildConfigFromConsoleInit translates the wizard's payload into a

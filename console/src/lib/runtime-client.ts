@@ -525,6 +525,14 @@ export interface ConsoleState {
 		// moment the daemon starts (defaults populate every field).
 		wizard_complete: boolean;
 		wizard_path?: string;
+		// Non-empty when the file on disk differs from the live
+		// in-memory config in ways the daemon can't hot-swap.
+		// Triggers a "restart needed" banner.
+		restart_required?: Array<{
+			path: string;
+			from?: unknown;
+			to?: unknown;
+		}>;
 	};
 	sources: {
 		available: boolean;

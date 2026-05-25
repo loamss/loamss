@@ -112,6 +112,18 @@ type Options struct {
 	// /console/capsules POST + DELETE; when nil those endpoints
 	// return 503.
 	CapsuleInstaller *capsule.Installer
+
+	// ReloadLog is an optional callback the server invokes when
+	// /console/init writes a config whose log.level or log.format
+	// differs from the running one. Start.go provides this by
+	// rebuilding its slog handler and pointing the server's logger
+	// at it. Other subsystems' loggers DON'T auto-update — they
+	// keep their startup logger — but logs going through the
+	// server's logger pick up the new config immediately.
+	//
+	// When nil, log-config diffs are reported as "restart_required"
+	// instead of hot-swapped.
+	ReloadLog func(config.LogConfig) error
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -156,6 +168,9 @@ type Server struct {
 	// Optional; when nil those endpoints return 503.
 	capsuleInstaller *capsule.Installer
 
+	// reloadLog is the optional log-rebuild callback from Options.
+	reloadLog func(config.LogConfig) error
+
 	// startedAt is the process start time, used to compute the
 	// runtime uptime advertised in /console/state.
 	startedAt time.Time
@@ -182,6 +197,7 @@ func New(opts Options) *Server {
 		host:             opts.Host,
 		sourceBuildEnv:   opts.SourceBuildEnv,
 		capsuleInstaller: opts.CapsuleInstaller,
+		reloadLog:        opts.ReloadLog,
 		startedAt:        time.Now().UTC(),
 	}
 

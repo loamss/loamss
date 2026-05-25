@@ -66,6 +66,17 @@ export function DashboardShell() {
       <Hero />
 
       <main className="flex-1 px-6 sm:px-10 pb-16 max-w-screen-2xl w-full mx-auto">
+        {/* Restart-required banner. Lights up when the config file
+         * on disk differs from the live in-memory config in ways
+         * the daemon can't hot-swap (storage / memory / models /
+         * listen_addr / data_dir / audit settings). Stays visible
+         * until the user runs `loamss start` against the new
+         * file. */}
+        {state?.config.restart_required &&
+          state.config.restart_required.length > 0 && (
+            <RestartBanner paths={state.config.restart_required.map((c) => c.path)} />
+          )}
+
         {/* Approvals pane — only renders when there's something to
          * approve. Sits at the top, full-width, intentionally
          * weighty. */}
@@ -140,6 +151,53 @@ function Hero() {
             {adapters.join(" · ")}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+interface RestartBannerProps {
+  paths: string[];
+}
+
+/**
+ * RestartBanner surfaces "the config on disk has diverged from
+ * the live config" in a visually-loud-but-not-alarming way. The
+ * runtime can hot-swap log.level / log.format; for storage,
+ * memory, models, listen_addr, audit settings, the user has to
+ * `loamss start` again. This banner names the paths so they know
+ * exactly what changed.
+ *
+ * We deliberately avoid an "auto-restart" button. Restarting the
+ * daemon mid-flight would terminate in-flight tool calls and
+ * drop SSE subscriptions; doing that as a side-effect of a
+ * banner click would be worse UX than the explicit terminal
+ * command. The right place for "graceful restart" is a future
+ * commit that handles fd handoff + drain semantics properly.
+ */
+function RestartBanner({ paths }: RestartBannerProps) {
+  return (
+    <div className="mt-10 border-l-2 border-amber bg-amber-tint/30 pl-5 pr-5 py-4 rounded-r-sm">
+      <div className="flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="smallcap text-amber">Restart required</div>
+          <p className="mt-1 text-sm text-ink-muted leading-relaxed">
+            The config file on disk has changed in ways the running
+            daemon can&apos;t hot-apply. Restart with{" "}
+            <span className="font-mono text-2xs text-ink">loamss start</span>{" "}
+            to pick up the new settings.
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+            {paths.map((p) => (
+              <li
+                key={p}
+                className="font-mono text-2xs text-ink-quiet"
+              >
+                {p}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </div>
   );
