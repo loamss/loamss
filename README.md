@@ -151,11 +151,12 @@ Reference runtime (in `runtime/`):
 - ✅ Console embedded in the runtime binary: first-run wizard + post-wizard dashboard, served at the runtime's listen address. Every dashboard pane (Sources, Capsules, Apps, Approvals, Activity) is interactive — install capsules, sync sources, approve grants, pair external clients without leaving the browser
 - ✅ Capsule SDK (TypeScript) — `@loamss/sdk` in [`sdk/typescript/`](sdk/typescript/): MCP-over-stdio transport, tool registration, runtime-callback client, hello-world + daily-brief reference capsules
 - ✅ MCP client library (TypeScript) — for Path-B apps pairing with a user's Loamss
-- ⏳ Additional source connectors (Calendar, Drive, Slack, GitHub)
-- ⏳ Python SDK
-- ⏳ Additional adapters (s3, postgres, pgvector, openai, mistral)
-- ⏳ Config hot-reload (today: edits via wizard or file require a `loamss start` restart)
-- ⏳ Release binaries via GitHub Actions (today: build from source)
+- ✅ Capsule SDK (Python) — `loamss_sdk` in [`sdk/python/`](sdk/python/), mirrors the TS surface
+- ✅ Config hot-reload — most config edits apply without restart; changes that can't (data dir, listen address, primary adapters) surface a "restart required" signal
+- ✅ Release binaries via GitHub Actions — `loamss-darwin-{arm64,amd64}` and `loamss-linux-{arm64,amd64}` published on each tag
+- ⏳ Capsule ingestor primitives (credential MCP tools, scheduled trigger, OAuth callback bridge) — once these land, third-party data-source connectors (Calendar, Drive, Slack, GitHub, Notion, Linear, …) ship as capsules under the `ingestor` role, not as new entries in `runtime/internal/source/`. The in-tree path is reserved for SPI reference implementations.
+- ⏳ Capsule marketplace (registry MVP, certification)
+- ⏳ `model:mistral` adapter
 
 See [`ROADMAP.md`](ROADMAP.md) for the phased build plan.
 

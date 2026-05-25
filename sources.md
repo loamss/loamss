@@ -31,7 +31,7 @@ The companion code is in `runtime/internal/source/`. The `source.Source` interfa
 └────────────────────┬─────────────────────────────────┘
                      │  HTTP/REST · OAuth · API quotas
 ┌────────────────────▼─────────────────────────────────┐
-│  Source connector  (source:gmail, source:calendar)   │
+│  Source connector  (source:files, source:gmail)      │
 │  - per-instance config + credentials                 │
 │  - opaque cursor for incremental sync                │
 │  - emits audit entries on every state change         │

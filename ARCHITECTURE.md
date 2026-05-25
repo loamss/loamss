@@ -157,9 +157,9 @@ Capsules are grouped by what they do. The runtime treats them uniformly; the tax
 
 #### 8a. Ingestors
 
-Pull data from external sources into user storage. One-way sync, no agent behavior, declared schemas. Examples: `gmail-ingestor`, `gcal-ingestor`, `drive-ingestor`, `slack-ingestor`, `github-ingestor`, `fs-ingestor`.
+Pull data from external sources into user storage. One-way sync, no agent behavior, declared schemas. Examples: `calendar-ingestor`, `drive-ingestor`, `slack-ingestor`, `github-ingestor`, `notion-ingestor`, `linear-ingestor`.
 
-Reference ingestors ship with the runtime. The community fills the long tail. From the user's perspective, ingestors are managed via `loamss source` — a deliberate vocabulary split (see `cli.md`).
+**Two SPI reference implementations ship in-tree** — `source:files` (no-auth) and `source:gmail` (OAuth). Their role is to anchor the SPI shape, not to be the canonical catalogue. Every other data-source connector ships as a capsule ingestor: the community fills the catalogue, the runtime ships the contract. From the user's perspective, ingestors are managed via `loamss source` regardless of whether they live in-tree or as a capsule — a deliberate vocabulary split (see `cli.md`). See `sources.md` for the SPI-vs-capsule rule.
 
 #### 8b. Organizers
 

@@ -29,7 +29,7 @@ The companion code is `runtime/internal/memory/`. The Go interface (`memory.Laye
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  Source connectors (source:gmail, source:calendar, …)         │
+│  Source connectors (source:files, source:gmail, …)            │
 │  Write source-shaped entries with provider-specific metadata. │
 └─────────────────────────────┬──────────────────────────────────┘
                               │ layer.Upsert(entry)

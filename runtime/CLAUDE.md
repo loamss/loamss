@@ -29,12 +29,16 @@ Components (planned, not yet present):
 - `internal/capsule/` — capsule host (subprocess + MCP)
 - `pkg/` — if/when we expose anything for external Go users
 
-Components (current, in progress):
+Source connectors:
 
-- `internal/source/` — source/connector framework: Source SPI, registry,
-  credential store, sources table in runtime.db, and the `loamss source`
-  CLI surface. Concrete connectors (source:gmail, source:calendar) land
-  in follow-up commits.
+- `internal/source/` — Source SPI, registry, credential store, the
+  `sources` table in runtime.db, and the `loamss source` CLI surface.
+  Two reference connectors ship in-tree: `source:files` (no-auth) and
+  `source:gmail` (OAuth). These are SPI reference implementations,
+  not the catalogue. New data-source connectors ship as **capsule
+  ingestors**, not as additional packages under `internal/source/`.
+  See repo-root `CLAUDE.md` "What to avoid" and `sources.md` for the
+  rule and reasoning.
 
 `pkg/` is empty today and may stay empty. The runtime is a single binary; embedding it as a library is not a goal in v0.1.
 

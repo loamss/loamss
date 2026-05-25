@@ -26,14 +26,14 @@ Goal: one user, one device, one real workflow, end to end.
 - [x] Memory adapter: `memory:sqlite` (with embedding-aware k-NN search)
 - [x] Model adapter: `model:anthropic` (+ bonus `model:ollama` for local inference, plus `model:dummy` / `model:none`)
 - [x] First reference connector: Gmail (`source:gmail`) — proves the Source SPI with a real provider. The SPI is generic; Gmail is the demonstration, not the target.
-- [ ] Connector: Google Calendar
+- [x] Second reference connector: `source:files` — no-auth path, the frictionless demo. With Gmail, this completes the SPI reference set (no-auth + OAuth). All further data sources ship as capsule ingestors.
 - [ ] Reference capsule: daily briefing ("what's on my plate today")
 - [ ] Reference capsule: email triage ("clear my inbox with my approval per send")
 - [ ] Console: setup wizard, capsule install, permission grants, audit log viewer
 - [x] CLI: Phase 1 MVP cut shipped (init, doctor, start, status, version, config, capsule, client, grant, audit, approve, export, source)
 - [x] Docs: getting started, building your first capsule — shipped: [docs/setup-gmail.md](docs/setup-gmail.md), [docs/build-your-first-capsule.md](docs/build-your-first-capsule.md), [docs/connect-your-app.md](docs/connect-your-app.md), [sources.md](sources.md)
 
-**Deliverable**: a person can install Loamss on their laptop, connect Gmail and Calendar, install two capsules, and use them for a week without us touching it.
+**Deliverable**: a person can install Loamss on their laptop, ingest their files and Gmail, install two capsules, and use them for a week without us touching it.
 
 **Stop and validate**: ten beta users run the daily-briefing flow for two weeks. Measure: time-to-first-useful-response after install; number of permission interactions per day; audit-log clarity; what they wish existed.
 
@@ -41,17 +41,24 @@ Goal: one user, one device, one real workflow, end to end.
 
 Goal: developers can build third-party capsules; users have real choice in backends.
 
-- [ ] Storage adapters: filesystem, S3-compatible, Postgres
-- [ ] Memory adapters: pgvector, Chroma, Qdrant
-- [ ] Model adapters: OpenAI, Mistral, local via Ollama; routing rules
-- [ ] Connectors: Google Drive, iCloud, Slack, GitHub
-- [ ] Connector framework + docs so third parties can build their own
-- [ ] SDKs: TypeScript and Python, with local test harnesses
+- [x] Storage adapters: `storage:s3` (AWS / R2 / B2 / MinIO / Wasabi), `storage:gcs` (with Workload Identity)
+- [x] Memory adapters: `memory:pgvector` (with optional Cloud SQL IAM-auth mode), `memory:chroma`, `memory:qdrant`
+- [x] Model adapters: `model:openai` (chat + embeddings); `model:ollama` already shipped in Phase 1
+- [ ] Model adapter: `model:mistral`
+- [x] SDKs: TypeScript and Python, with local test harnesses
+- [x] Connector framework + docs so third parties can build their own — see [`docs/build-your-first-source-connector.md`](docs/build-your-first-source-connector.md)
+- [ ] **Capsule ingestor primitives** so connectors can ship outside the runtime tree:
+    - Credential MCP tools (`credentials.set` / `credentials.get`) — capsule-namespaced, runtime-encrypted
+    - Scheduled trigger — runtime drives the capsule's sync callback on a cadence
+    - OAuth callback bridge — runtime owns the loopback listener, forwards the auth code to the capsule via MCP
+- [ ] Reference capsule ingestor demonstrating the above (likely a non-OAuth one first, then an OAuth one)
 - [ ] Capsule registry MVP: API, web UI, signing, versioning
 - [ ] Capsule certification: review pipeline for the canonical registry
 - [ ] Agent host: support for standing tasks ("watch my inbox this week")
 - [ ] Memory: entity resolution, episodic summarization, knowledge graph queries
 - [ ] Creator publishing surface: `content.video` (and friends) MCP resource type with signed-URL streaming, `events.write` capability for platform-side metrics/revenue write-back. See `scenarios.md` §5 and §6.
+
+Once the capsule ingestor primitives land, **Calendar, Drive, Slack, GitHub, Notion, Linear, and the rest of the long tail ship as capsules in the marketplace**, not as in-tree code. The two in-tree connectors (`source:files`, `source:gmail`) remain as the SPI reference implementations.
 
 **Stop and validate**: capsule developer day. Invite 30 builders. Watch where the SDK frustrates them. Ship five third-party capsules to the registry.
 

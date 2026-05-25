@@ -377,8 +377,8 @@ The dashboard and three flows above set the visual language. Below is a sketch f
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  ●  calendar-personal                       source:calendar │    │
-│  │     482 events · synced 4m ago · sync ok                    │    │
+│  │  ●  notes-folder                               source:files │    │
+│  │     482 docs · synced 4m ago · sync ok                      │    │
 │  │                                                             │    │
 │  │     Next sync: in 56 min   [ Sync now ]   [ Manage ▾ ]      │    │
 │  └─────────────────────────────────────────────────────────────┘    │
