@@ -145,7 +145,7 @@ Reference runtime (in `runtime/`):
 - ✅ Storage adapters: `storage:fs-encrypted`, `storage:s3` (works with AWS / R2 / B2 / MinIO / Wasabi / any S3-compatible)
 - ✅ Memory adapters: `memory:sqlite` (single-host with embedding-aware brute-force k-NN), `memory:pgvector` (Postgres + pgvector for production scale; native ivfflat / hnsw indexes)
 - ✅ Memory layer: entity + thread resolution above the adapter
-- ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
+- ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`, `model:openai` (GPT chat-completions + `text-embedding-3` family — the natural embedding pair for `memory:pgvector`)
 - ✅ Source connector framework + two reference connectors (`source:files`, `source:gmail`). The SPI is provider-agnostic — these are demonstrations, not the design target
 - ✅ CLI: `init`, `doctor`, `start`, `open`, `status`, `version`, `config`, `capsule`, `client`, `grant`, `audit`, `approve`, `export`, `source`
 - ✅ Console embedded in the runtime binary: first-run wizard + post-wizard dashboard, served at the runtime's listen address. Every dashboard pane (Sources, Capsules, Apps, Approvals, Activity) is interactive — install capsules, sync sources, approve grants, pair external clients without leaving the browser
