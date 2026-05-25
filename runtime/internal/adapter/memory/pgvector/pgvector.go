@@ -76,6 +76,11 @@ type Adapter struct {
 	metric    string // cosine | l2 | inner
 	dimension int    // configured vector dimension; required by pgvector schema
 	inited    bool
+
+	// cloudSQLCleanup is the close function the Cloud SQL
+	// connector returned at Init, if any. Nil when not using
+	// the Cloud SQL dial path. Called from Close.
+	cloudSQLCleanup func() error
 }
 
 // Init reads config + opens a connection pool + ensures the schema
@@ -126,12 +131,24 @@ func (a *Adapter) Init(ctx context.Context, config map[string]any) error {
 	if cfg.MaxConns == 0 {
 		cfg.MaxConns = 10
 	}
+	// Optional: route through the Cloud SQL Connector for
+	// passwordless IAM-based auth against Cloud SQL Postgres.
+	// When cloud_sql_instance is unset this is a no-op and the
+	// adapter behaves as a standard libpq client.
+	cloudSQLCleanup, err := applyCloudSQLDialerIfConfigured(ctx, cfg, config)
+	if err != nil {
+		return err
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
+		if cloudSQLCleanup != nil {
+			_ = cloudSQLCleanup()
+		}
 		return fmt.Errorf("pgvector: creating pool: %w", err)
 	}
 
 	a.pool = pool
+	a.cloudSQLCleanup = cloudSQLCleanup
 	a.table = "loamss_memory_" + suffix
 	a.metric = metric
 	a.dimension = dim
@@ -417,14 +434,19 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-// Close closes the pool.
+// Close closes the pool and, if the Cloud SQL dialer was used,
+// shuts down the connector's background refresh goroutines.
 func (a *Adapter) Close(_ context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.pool != nil {
 		a.pool.Close()
 	}
+	if a.cloudSQLCleanup != nil {
+		_ = a.cloudSQLCleanup()
+	}
 	a.pool = nil
+	a.cloudSQLCleanup = nil
 	a.inited = false
 	return nil
 }
