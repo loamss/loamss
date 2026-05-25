@@ -93,6 +93,17 @@ type Options struct {
 	// /console/state reports installed capsules without a running
 	// flag.
 	Host *capsule.Host
+
+	// SourceBuildEnv carries the live adapters the daemon uses to
+	// build source.Source instances on demand (POST /console/sources
+	// / sync). Optional; when nil or partially-populated, the
+	// /console/sources/* mutation endpoints return 503 with an
+	// explanatory message rather than crashing.
+	//
+	// Distinct from Sources (which is just the persistence layer) —
+	// listing sources only needs the store, but constructing one
+	// for a sync needs the full adapter chain.
+	SourceBuildEnv *source.BuildEnv
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -127,6 +138,12 @@ type Server struct {
 	capsules *capsule.Store
 	host     *capsule.Host
 
+	// sourceBuildEnv is needed for the mutation endpoints
+	// (/console/sources POST/DELETE/sync) — they have to construct
+	// a source.Source instance to validate config and run syncs.
+	// Optional; when nil, mutation endpoints return 503.
+	sourceBuildEnv *source.BuildEnv
+
 	// startedAt is the process start time, used to compute the
 	// runtime uptime advertised in /console/state.
 	startedAt time.Time
@@ -141,17 +158,18 @@ type Server struct {
 // Engine is provided, /pair and /mcp join the mux.
 func New(opts Options) *Server {
 	s := &Server{
-		addr:       opts.Addr,
-		logger:     opts.Logger,
-		version:    opts.Version,
-		engine:     opts.Engine,
-		audit:      opts.Audit,
-		configPath: opts.ConfigPath,
-		baseConfig: opts.BaseConfig,
-		sources:    opts.Sources,
-		capsules:   opts.Capsules,
-		host:       opts.Host,
-		startedAt:  time.Now().UTC(),
+		addr:           opts.Addr,
+		logger:         opts.Logger,
+		version:        opts.Version,
+		engine:         opts.Engine,
+		audit:          opts.Audit,
+		configPath:     opts.ConfigPath,
+		baseConfig:     opts.BaseConfig,
+		sources:        opts.Sources,
+		capsules:       opts.Capsules,
+		host:           opts.Host,
+		sourceBuildEnv: opts.SourceBuildEnv,
+		startedAt:      time.Now().UTC(),
 	}
 
 	mux := http.NewServeMux()
@@ -173,6 +191,15 @@ func New(opts Options) *Server {
 	// and the dashboard runs in the same browser session the user
 	// just used to write the config — no token to negotiate.
 	mux.HandleFunc("GET /console/state", s.handleConsoleState)
+
+	// Sources CRUD under /console/sources. Same localhost contract.
+	// The dashboard mutates sources directly; the CLI's `loamss
+	// source ...` commands write through the same SQLite store, so
+	// either path reflects in the other on the next /console/state
+	// poll.
+	mux.HandleFunc("POST /console/sources", s.handleSourceAdd)
+	mux.HandleFunc("POST /console/sources/{name}/sync", s.handleSourceSync)
+	mux.HandleFunc("DELETE /console/sources/{name}", s.handleSourceDelete)
 
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the

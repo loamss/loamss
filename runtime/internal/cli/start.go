@@ -20,6 +20,8 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy"     // registers model:dummy
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"      // registers model:none
 	_ "github.com/loamss/loamss/runtime/internal/adapter/model/ollama"    // registers model:ollama
+	"github.com/loamss/loamss/runtime/internal/adapter/storage"
+	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted" // registers storage:fs-encrypted
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
@@ -206,6 +208,30 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = srcStore.Close() }()
 
+	// Storage adapter — opened here so /console/sources can both
+	// validate adapter config (by constructing a real Source via
+	// source.Build) and clean up per-source credential blobs on
+	// delete. The CLI's `loamss source ...` commands construct
+	// their own per-invocation; both opens hit the same backing
+	// store but the SPI's Init contract is idempotent.
+	storageAdapter, err := storage.New(cfg.Storage.Adapter)
+	if err != nil {
+		return fmt.Errorf("constructing storage adapter %q: %w", cfg.Storage.Adapter, err)
+	}
+	if err := storageAdapter.Init(ctx, cfg.Storage.Config); err != nil {
+		return fmt.Errorf("initializing storage adapter: %w", err)
+	}
+	defer func() { _ = storageAdapter.Close(context.Background()) }()
+
+	// Build env handed to /console/sources for on-demand source
+	// construction. Reuses the daemon's live adapters; nothing is
+	// re-constructed per request.
+	sourceBuildEnv := &source.BuildEnv{
+		Storage: storageAdapter,
+		Memory:  memoryBridge{layer: memLayer},
+		Logger:  slogShim{logger},
+	}
+
 	// Resolve where /console/init should write the wizard's payload.
 	// Honor --config if the user gave one (so the wizard updates the
 	// file the daemon is actually reading), otherwise fall back to
@@ -216,18 +242,19 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 
 	srv := server.New(server.Options{
-		Addr:       cfg.Runtime.ListenAddr,
-		Logger:     logger,
-		Version:    version,
-		Engine:     engine,
-		Audit:      auditWriter,
-		Tools:      tools,
-		Resources:  resources,
-		ConfigPath: consoleConfigPath,
-		BaseConfig: cfg,
-		Sources:    srcStore,
-		Capsules:   capStore,
-		Host:       host,
+		Addr:           cfg.Runtime.ListenAddr,
+		Logger:         logger,
+		Version:        version,
+		Engine:         engine,
+		Audit:          auditWriter,
+		Tools:          tools,
+		Resources:      resources,
+		ConfigPath:     consoleConfigPath,
+		BaseConfig:     cfg,
+		Sources:        srcStore,
+		Capsules:       capStore,
+		Host:           host,
+		SourceBuildEnv: sourceBuildEnv,
 	})
 
 	stop := installSignalTrap(logger)

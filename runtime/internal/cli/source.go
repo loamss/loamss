@@ -338,49 +338,8 @@ as the source's last_sync state.`,
 		}
 		defer func() { _ = src.Close(ctx) }()
 
-		_, _ = deps.audit.Append(ctx, audit.Entry{
-			Type:    "source.sync.started",
-			Actor:   audit.Actor{Kind: audit.ActorUser, ID: "cli"},
-			Subject: &audit.Subject{Kind: audit.SubjectSource, ID: c.Name},
-			Outcome: audit.OutcomeSuccess,
-			Data:    map[string]any{"adapter_id": c.AdapterID},
-		})
-
-		started := time.Now().UTC()
-		result, syncErr := src.Sync(ctx, c.Cursor)
-		finished := time.Now().UTC()
-
-		// Persist cursor + last_sync metadata even on failure — the
-		// audit log already records the outcome and the user wants
-		// to see the most-recent attempt in `source show`.
-		status := "success"
-		if syncErr != nil {
-			status = "error"
-		}
-		summary := map[string]any{
-			"records_added":   result.RecordsAdded,
-			"records_updated": result.RecordsUpdated,
-			"bytes_ingested":  result.BytesIngested,
-			"errors":          len(result.Errors),
-			"started":         started.Format(time.RFC3339Nano),
-			"finished":        finished.Format(time.RFC3339Nano),
-		}
-		if syncErr != nil {
-			summary["error_message"] = syncErr.Error()
-		}
-		_ = deps.store.SetLastSync(ctx, c.Name, status, summary, finished)
-		if syncErr == nil && len(result.Cursor) > 0 {
-			_ = deps.store.UpdateCursor(ctx, c.Name, result.Cursor)
-		}
-
-		_, _ = deps.audit.Append(ctx, audit.Entry{
-			Type:    "source.sync.completed",
-			Actor:   audit.Actor{Kind: audit.ActorUser, ID: "cli"},
-			Subject: &audit.Subject{Kind: audit.SubjectSource, ID: c.Name},
-			Outcome: auditOutcomeFromError(syncErr),
-			Data:    summary,
-		})
-
+		result, syncErr := source.RunSync(ctx, src, deps.store, deps.audit, c,
+			source.RunSyncActor{Kind: audit.ActorUser, ID: "cli"})
 		if syncErr != nil {
 			return fmt.Errorf("sync %s: %w", c.Name, syncErr)
 		}
@@ -388,12 +347,13 @@ as the source's last_sync state.`,
 		if sourceSyncJSON {
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
-			return enc.Encode(summary)
+			return enc.Encode(result.Summary)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"✓ Synced %q: %d added, %d updated, %d bytes, %d errors (%v)\n",
 			c.Name, result.RecordsAdded, result.RecordsUpdated,
-			result.BytesIngested, len(result.Errors), finished.Sub(started).Round(time.Millisecond))
+			result.BytesIngested, result.Errors,
+			result.Finished.Sub(result.Started).Round(time.Millisecond))
 		return nil
 	},
 }
@@ -671,30 +631,17 @@ func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
 
 // buildSourceInstance constructs and Inits the source connector
 // declared by c.AdapterID, wiring it to the user's storage adapter
-// and a per-source credential store. Memory adapter wiring lands
-// with the Gmail connector (commit 2); for now sources that need
-// memory return an error from Init and the CLI surfaces it.
+// and a per-source credential store. Thin wrapper around
+// source.Build — the CLI scopes the logger first (so log lines
+// carry source_name + source_id attributes) then hands the env
+// over to the shared builder.
 func buildSourceInstance(ctx context.Context, deps *sourceDeps, c *source.Configured) (source.Source, error) {
-	if !sourceRegistered(c.AdapterID) {
-		return nil, fmt.Errorf("source adapter %q is not registered in this binary", c.AdapterID)
-	}
-	src, err := source.New(c.AdapterID)
-	if err != nil {
-		return nil, err
-	}
-	creds := source.NewStorageCredentialStore(deps.storage, c.Name)
-	logger := deps.logger.With("source_name", c.Name, "source_id", c.AdapterID)
-	if err := src.Init(ctx, source.Deps{
-		SourceName:  c.Name,
-		Config:      c.Config,
-		Storage:     deps.storage,
-		Memory:      memoryBridge{layer: deps.memLayer},
-		Credentials: creds,
-		Logger:      slogShim{logger},
-	}); err != nil {
-		return nil, fmt.Errorf("initializing source %s: %w", c.AdapterID, err)
-	}
-	return src, nil
+	scoped := deps.logger.With("source_name", c.Name, "source_id", c.AdapterID)
+	return source.Build(ctx, source.BuildEnv{
+		Storage: deps.storage,
+		Memory:  memoryBridge{layer: deps.memLayer},
+		Logger:  slogShim{scoped},
+	}, c)
 }
 
 // memoryBridge adapts memlayer.Layer to the narrow
@@ -782,16 +729,6 @@ func sortedKeys(m map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func auditOutcomeFromError(err error) audit.Outcome {
-	if err == nil {
-		return audit.OutcomeSuccess
-	}
-	if errors.Is(err, source.ErrAuthRequired) {
-		return audit.OutcomeDenied
-	}
-	return audit.OutcomeError
 }
 
 func init() {
