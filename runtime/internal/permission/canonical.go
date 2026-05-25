@@ -302,6 +302,33 @@ func canonicalCapabilities(now time.Time) []CapabilityDef {
 			},
 			RegisteredAt: now,
 		},
+		// --- credentials.{read,write} (capsule ingestors persist secrets) ---
+		// Ingestor capsules need to persist long-lived secrets (OAuth
+		// refresh tokens, API keys) between syncs. The credentials.*
+		// MCP tools store these via the runtime's configured storage
+		// adapter — same encryption-at-rest path source connectors use.
+		// Both capabilities are capsule-namespaced by construction
+		// (the tool dispatcher reads the principal name and keys the
+		// blob there), so no per-key scope is needed.
+		// DefaultApproval: false — capsule installation already
+		// surfaces the rationale on these in the manifest; per-call
+		// approval would make ingestion unusable.
+		{
+			Name:            "credentials.read",
+			Namespace:       "credentials",
+			Direction:       DirectionInternal,
+			DefaultApproval: false,
+			Scope:           ScopeSchema{},
+			RegisteredAt:    now,
+		},
+		{
+			Name:            "credentials.write",
+			Namespace:       "credentials",
+			Direction:       DirectionInternal,
+			DefaultApproval: false,
+			Scope:           ScopeSchema{},
+			RegisteredAt:    now,
+		},
 		// --- external.http (capsules talking to the outside) ---
 		// Capsules that need to call third-party APIs (Slack webhooks,
 		// Stripe, etc.) declare external.http with a host allowlist.

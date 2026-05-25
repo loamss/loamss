@@ -232,6 +232,26 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = storageAdapter.Close(context.Background()) }()
 
+	// Credentials store backing for the capsule-ingestor primitives.
+	// Wraps the configured storage adapter; per-capsule blobs live at
+	// capsules/<name>/credentials.json (mirroring the path source
+	// connectors use for sources/<name>/credentials.json).
+	credsStore := mcp.NewCapsuleCredentialStore(storageAdapter)
+
+	// credentials.* tools — only become callable now that storage is
+	// open. Registered into the same registry the runtime tools above
+	// share; dispatch is identical, just gated on the capsule-only
+	// principal check inside the handler.
+	for _, t := range []mcp.Tool{
+		mcp.NewCredentialsSetTool(credsStore, auditWriter),
+		mcp.NewCredentialsGetTool(credsStore, auditWriter),
+		mcp.NewCredentialsDeleteTool(credsStore, auditWriter),
+	} {
+		if err := tools.Register(t); err != nil {
+			return fmt.Errorf("registering tool %q: %w", t.Name, err)
+		}
+	}
+
 	// Build env handed to /console/sources for on-demand source
 	// construction. Reuses the daemon's live adapters; nothing is
 	// re-constructed per request.
