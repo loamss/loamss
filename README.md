@@ -142,7 +142,7 @@ Reference runtime (in `runtime/`):
 - ✅ Hash-chained audit log (SQLite, WAL, `BEGIN IMMEDIATE`) + `Verify` pass
 - ✅ Permission engine with scope match primitives + grant store + approval queue
 - ✅ Capsule host: subprocess + MCP-over-stdio + permission-gated callbacks
-- ✅ Storage adapter: `storage:fs-encrypted`
+- ✅ Storage adapters: `storage:fs-encrypted`, `storage:s3` (works with AWS / R2 / B2 / MinIO / Wasabi / any S3-compatible)
 - ✅ Memory adapter: `memory:sqlite` (with embedding-aware search)
 - ✅ Memory layer: entity + thread resolution above the adapter
 - ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
