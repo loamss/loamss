@@ -143,7 +143,7 @@ Reference runtime (in `runtime/`):
 - ✅ Permission engine with scope match primitives + grant store + approval queue
 - ✅ Capsule host: subprocess + MCP-over-stdio + permission-gated callbacks
 - ✅ Storage adapters: `storage:fs-encrypted`, `storage:s3` (works with AWS / R2 / B2 / MinIO / Wasabi / any S3-compatible)
-- ✅ Memory adapter: `memory:sqlite` (with embedding-aware search)
+- ✅ Memory adapters: `memory:sqlite` (single-host with embedding-aware brute-force k-NN), `memory:pgvector` (Postgres + pgvector for production scale; native ivfflat / hnsw indexes)
 - ✅ Memory layer: entity + thread resolution above the adapter
 - ✅ Model adapters: `model:none`, `model:dummy`, `model:anthropic`, `model:ollama`
 - ✅ Source connector framework + two reference connectors (`source:files`, `source:gmail`). The SPI is provider-agnostic — these are demonstrations, not the design target

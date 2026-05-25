@@ -17,7 +17,8 @@ import (
 	"github.com/spf13/cobra"
 
 	memadapter "github.com/loamss/loamss/runtime/internal/adapter/memory"
-	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite" // registers memory:sqlite-vec
+	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/pgvector" // registers memory:pgvector
+	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite"   // registers memory:sqlite-vec
 	"github.com/loamss/loamss/runtime/internal/adapter/storage"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted" // registers storage:fs-encrypted
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/s3"          // registers storage:s3
