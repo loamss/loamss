@@ -404,6 +404,34 @@ func (h *Host) Stop(ctx context.Context) error {
 	return firstErr
 }
 
+// StopOne stops a single running capsule by name. Returns nil if
+// the capsule wasn't running (idempotent), or the client's Stop
+// error if shutdown failed. Used by the dashboard's per-row Stop
+// button and by Uninstall to guarantee the capsule's subprocess
+// is gone before its files / grants are removed.
+//
+// The client is removed from the map while we hold the lock so
+// concurrent Running() / Client() observe the post-stop state
+// immediately; the actual Stop() call happens outside the lock
+// so a slow shutdown doesn't block list operations.
+func (h *Host) StopOne(ctx context.Context, name string) error {
+	h.mu.Lock()
+	client, ok := h.clients[name]
+	if ok {
+		delete(h.clients, name)
+	}
+	h.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := client.Stop(stopCtx); err != nil {
+		return fmt.Errorf("stopping %s: %w", name, err)
+	}
+	return nil
+}
+
 // Client returns the running Client for a capsule by name, or nil.
 // Exposed so the supervisor + future `loamss capsule status` can
 // query per-capsule state.

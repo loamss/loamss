@@ -255,6 +255,8 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		Capsules:       capStore,
 		Host:           host,
 		SourceBuildEnv: sourceBuildEnv,
+		CapsuleInstaller: capsule.NewInstaller(capStore, engine, auditWriter,
+			filepath.Join(cfg.Runtime.DataDir, "capsules")),
 	})
 
 	stop := installSignalTrap(logger)

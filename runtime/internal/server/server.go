@@ -104,6 +104,14 @@ type Options struct {
 	// listing sources only needs the store, but constructing one
 	// for a sync needs the full adapter chain.
 	SourceBuildEnv *source.BuildEnv
+
+	// CapsuleInstaller is the helper that installs / uninstalls
+	// capsules from a filesystem path: it parses + validates the
+	// manifest, copies code into <data_dir>/capsules/, issues
+	// permission grants, and persists the row. Required for
+	// /console/capsules POST + DELETE; when nil those endpoints
+	// return 503.
+	CapsuleInstaller *capsule.Installer
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -144,6 +152,10 @@ type Server struct {
 	// Optional; when nil, mutation endpoints return 503.
 	sourceBuildEnv *source.BuildEnv
 
+	// capsuleInstaller drives /console/capsules POST + DELETE.
+	// Optional; when nil those endpoints return 503.
+	capsuleInstaller *capsule.Installer
+
 	// startedAt is the process start time, used to compute the
 	// runtime uptime advertised in /console/state.
 	startedAt time.Time
@@ -158,18 +170,19 @@ type Server struct {
 // Engine is provided, /pair and /mcp join the mux.
 func New(opts Options) *Server {
 	s := &Server{
-		addr:           opts.Addr,
-		logger:         opts.Logger,
-		version:        opts.Version,
-		engine:         opts.Engine,
-		audit:          opts.Audit,
-		configPath:     opts.ConfigPath,
-		baseConfig:     opts.BaseConfig,
-		sources:        opts.Sources,
-		capsules:       opts.Capsules,
-		host:           opts.Host,
-		sourceBuildEnv: opts.SourceBuildEnv,
-		startedAt:      time.Now().UTC(),
+		addr:             opts.Addr,
+		logger:           opts.Logger,
+		version:          opts.Version,
+		engine:           opts.Engine,
+		audit:            opts.Audit,
+		configPath:       opts.ConfigPath,
+		baseConfig:       opts.BaseConfig,
+		sources:          opts.Sources,
+		capsules:         opts.Capsules,
+		host:             opts.Host,
+		sourceBuildEnv:   opts.SourceBuildEnv,
+		capsuleInstaller: opts.CapsuleInstaller,
+		startedAt:        time.Now().UTC(),
 	}
 
 	mux := http.NewServeMux()
@@ -200,6 +213,15 @@ func New(opts Options) *Server {
 	mux.HandleFunc("POST /console/sources", s.handleSourceAdd)
 	mux.HandleFunc("POST /console/sources/{name}/sync", s.handleSourceSync)
 	mux.HandleFunc("DELETE /console/sources/{name}", s.handleSourceDelete)
+
+	// Capsules CRUD + lifecycle under /console/capsules. Mutations
+	// share the source endpoints' localhost contract: the runtime
+	// binds 127.0.0.1 by default, and the dashboard runs in the
+	// browser session the user opened it from. No bearer auth.
+	mux.HandleFunc("POST /console/capsules", s.handleCapsuleInstall)
+	mux.HandleFunc("DELETE /console/capsules/{name}", s.handleCapsuleUninstall)
+	mux.HandleFunc("POST /console/capsules/{name}/start", s.handleCapsuleStart)
+	mux.HandleFunc("POST /console/capsules/{name}/stop", s.handleCapsuleStop)
 
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the
