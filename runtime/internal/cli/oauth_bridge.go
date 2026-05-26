@@ -21,6 +21,7 @@ type daemonOAuthBridge struct {
 	capsules     *capsule.Store
 	clients      *oauth.ClientStore
 	orchestrator *oauth.Orchestrator
+	creds        oauth.CredentialStore
 	logger       *slog.Logger
 }
 
@@ -28,12 +29,14 @@ func newDaemonOAuthBridge(
 	capsules *capsule.Store,
 	clients *oauth.ClientStore,
 	orchestrator *oauth.Orchestrator,
+	creds oauth.CredentialStore,
 	logger *slog.Logger,
 ) *daemonOAuthBridge {
 	return &daemonOAuthBridge{
 		capsules:     capsules,
 		clients:      clients,
 		orchestrator: orchestrator,
+		creds:        creds,
 		logger:       logger,
 	}
 }
@@ -115,6 +118,20 @@ func (b *daemonOAuthBridge) BeginAuthFlow(
 		return oauth.BeginResult{}, err
 	}
 	return b.orchestrator.Begin(ctx, capsuleName, provider)
+}
+
+// CapsuleHasOAuthToken implements server.CapsuleAuthStateProbe.
+// Returns true when the capsule has a stored refresh token (the
+// durable proof of "this capsule is connected"). The orchestrator's
+// in-flight flows are NOT considered — only completed flows count.
+func (b *daemonOAuthBridge) CapsuleHasOAuthToken(
+	ctx context.Context, capsuleName string,
+) (bool, error) {
+	_, found, err := b.creds.Get(ctx, capsuleName, oauth.RefreshTokenKey)
+	if err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 // credentialStoreAdapter adapts mcp.CapsuleCredentialStore to the

@@ -20,11 +20,16 @@ import (
 
 // Credentials key names used in the per-capsule CapsuleCredentialStore.
 // Stable identifiers; capsules should not rely on them.
+//
+// RefreshTokenKey is exported because the daemon's "is this capsule
+// connected?" probe needs to peek at it from outside the package.
+// The other keys are unexported — only the orchestrator reads them.
 const (
-	credKeyAccessToken  = "oauth.access_token"
-	credKeyRefreshToken = "oauth.refresh_token"
-	credKeyScope        = "oauth.scope"
-	credKeyTokenType    = "oauth.token_type"
+	credKeyAccessToken         = "oauth.access_token"
+	RefreshTokenKey     string = "oauth.refresh_token"
+	credKeyRefreshToken        = RefreshTokenKey
+	credKeyScope               = "oauth.scope"
+	credKeyTokenType           = "oauth.token_type"
 )
 
 // Sentinel errors. Callers wrap with %w and test via errors.Is.

@@ -256,8 +256,9 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("opening oauth client store: %w", err)
 	}
 	defer func() { _ = oauthClients.Close() }()
-	oauthOrch := oauth.NewOrchestrator(newCredentialStoreAdapter(credsStore), logger)
-	oauthBridge := newDaemonOAuthBridge(capStore, oauthClients, oauthOrch, logger)
+	credsAdapter := newCredentialStoreAdapter(credsStore)
+	oauthOrch := oauth.NewOrchestrator(credsAdapter, logger)
+	oauthBridge := newDaemonOAuthBridge(capStore, oauthClients, oauthOrch, credsAdapter, logger)
 
 	// Wire the capsule package's manifest-validation hook so
 	// well-known provider names (google, github) don't require
@@ -332,6 +333,8 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		CapsuleInstaller: capsule.NewInstaller(capStore, engine, auditWriter,
 			filepath.Join(cfg.Runtime.DataDir, "capsules")).
 			SetIngestorBridge(newDaemonIngestorBridge(srcStore, credsStore, cursorStore)),
+		OAuthClients:  oauthClients,
+		OAuthBeginner: oauthBridge,
 		// ReloadLog: hot-swap the daemon's slog handler when the
 		// wizard writes a config with new log.level / log.format.
 		// Subsystems with their own logger refs (engine, audit,

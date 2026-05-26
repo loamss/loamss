@@ -27,6 +27,7 @@ import (
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/console"
 	"github.com/loamss/loamss/runtime/internal/mcp"
+	"github.com/loamss/loamss/runtime/internal/oauth"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
@@ -124,6 +125,25 @@ type Options struct {
 	// When nil, log-config diffs are reported as "restart_required"
 	// instead of hot-swapped.
 	ReloadLog func(config.LogConfig) error
+
+	// OAuthClients is the per-user OAuth-client persistence layer.
+	// Drives /console/oauth/clients/{provider} POST/GET/DELETE.
+	// Optional; when nil the OAuth-client endpoints return 503.
+	OAuthClients *oauth.ClientStore
+
+	// OAuthBeginner kicks off an OAuth flow for an ingestor capsule
+	// (composes the manifest oauth block + ClientStore + the
+	// orchestrator). Drives POST /console/oauth/begin. Optional;
+	// when nil the endpoint returns 503. Wired by cli/start.go to
+	// daemonOAuthBridge.BeginAuthFlow.
+	OAuthBeginner OAuthBeginner
+}
+
+// OAuthBeginner is the narrow surface /console/oauth/begin needs.
+// Decoupled from cli.daemonOAuthBridge so this package doesn't
+// import internal/cli.
+type OAuthBeginner interface {
+	BeginAuthFlow(ctx context.Context, capsuleName string) (oauth.BeginResult, error)
 }
 
 // Server wraps the underlying http.Server with a stable API surface and
@@ -171,6 +191,14 @@ type Server struct {
 	// reloadLog is the optional log-rebuild callback from Options.
 	reloadLog func(config.LogConfig) error
 
+	// oauthClients persists per-user OAuth client_ids. Drives the
+	// /console/oauth/clients/{provider} endpoints; nil → 503.
+	oauthClients *oauth.ClientStore
+
+	// oauthBeginner kicks off browser flows for ingestor capsules
+	// (POST /console/oauth/begin). nil → 503.
+	oauthBeginner OAuthBeginner
+
 	// startedAt is the process start time, used to compute the
 	// runtime uptime advertised in /console/state.
 	startedAt time.Time
@@ -198,6 +226,8 @@ func New(opts Options) *Server {
 		sourceBuildEnv:   opts.SourceBuildEnv,
 		capsuleInstaller: opts.CapsuleInstaller,
 		reloadLog:        opts.ReloadLog,
+		oauthClients:     opts.OAuthClients,
+		oauthBeginner:    opts.OAuthBeginner,
 		startedAt:        time.Now().UTC(),
 	}
 
@@ -254,6 +284,16 @@ func New(opts Options) *Server {
 	// in the same auth model.
 	mux.HandleFunc("POST /console/clients/pair", s.handleClientPair)
 	mux.HandleFunc("DELETE /console/clients/{id}", s.handleClientRevoke)
+
+	// OAuth — per-user client_id management + flow kickoff. Same
+	// localhost-only contract as the other /console/* endpoints;
+	// each handler 503s when its dependency is unwired.
+	mux.HandleFunc("GET /console/oauth/clients", s.handleOAuthClientsList)
+	mux.HandleFunc("POST /console/oauth/clients/{provider}", s.handleOAuthClientsSet)
+	mux.HandleFunc("DELETE /console/oauth/clients/{provider}", s.handleOAuthClientsDelete)
+	mux.HandleFunc("GET /console/oauth/providers", s.handleOAuthProvidersList)
+	mux.HandleFunc("POST /console/oauth/begin", s.handleOAuthBegin)
+	mux.HandleFunc("GET /console/oauth/status", s.handleOAuthStatus)
 
 	if opts.Engine != nil {
 		// /pair: pairing redemption, unauthenticated by design (the
