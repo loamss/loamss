@@ -251,7 +251,7 @@ export function parseRSS(xml: string): RSSItem[] {
 
 function matchInner(s: string, re: RegExp): string | undefined {
 	const m = s.match(re);
-	return m ? m[1].trim() : undefined;
+	return m && m[1] ? m[1].trim() : undefined;
 }
 
 function stripCDATA(s: string): string {

@@ -29,12 +29,12 @@ test("parseRSS: standard RSS 2.0 with guids", () => {
 </rss>`;
 	const items = parseRSS(xml);
 	expect(items).toHaveLength(2);
-	expect(items[0].title).toBe("First post");
-	expect(items[0].guid).toBe("https://example.com/first");
-	expect(items[0].link).toBe("https://example.com/first");
-	expect(items[0].description).toBe("First body text.");
-	expect(items[0].pubDate).toMatch(/^2024-05-13T/);
-	expect(items[1].guid).toBe("https://example.com/second");
+	expect(items[0]!.title).toBe("First post");
+	expect(items[0]!.guid).toBe("https://example.com/first");
+	expect(items[0]!.link).toBe("https://example.com/first");
+	expect(items[0]!.description).toBe("First body text.");
+	expect(items[0]!.pubDate).toMatch(/^2024-05-13T/);
+	expect(items[1]!.guid).toBe("https://example.com/second");
 });
 
 test("parseRSS: Atom feed with id + updated", () => {
@@ -51,10 +51,10 @@ test("parseRSS: Atom feed with id + updated", () => {
 </feed>`;
 	const items = parseRSS(xml);
 	expect(items).toHaveLength(1);
-	expect(items[0].guid).toBe("tag:example.com,2024:1");
-	expect(items[0].link).toBe("https://example.com/atom1");
-	expect(items[0].description).toBe("Atom summary.");
-	expect(items[0].pubDate).toBe("2024-06-01T10:00:00.000Z");
+	expect(items[0]!.guid).toBe("tag:example.com,2024:1");
+	expect(items[0]!.link).toBe("https://example.com/atom1");
+	expect(items[0]!.description).toBe("Atom summary.");
+	expect(items[0]!.pubDate).toBe("2024-06-01T10:00:00.000Z");
 });
 
 test("parseRSS: strips CDATA from title + description", () => {
@@ -64,8 +64,8 @@ test("parseRSS: strips CDATA from title + description", () => {
     <guid>g1</guid>
   </item></channel></rss>`;
 	const items = parseRSS(xml);
-	expect(items[0].title).toBe("Tricky <Title> & Co.");
-	expect(items[0].description).toBe("Body with <em>markup</em>.");
+	expect(items[0]!.title).toBe("Tricky <Title> & Co.");
+	expect(items[0]!.description).toBe("Body with <em>markup</em>.");
 });
 
 test("parseRSS: empty feed returns empty array", () => {
@@ -80,5 +80,5 @@ test("parseRSS: non-ISO pubDate stays as the original string", () => {
     <pubDate>some-random-string</pubDate>
   </item></channel></rss>`;
 	const items = parseRSS(xml);
-	expect(items[0].pubDate).toBe("some-random-string");
+	expect(items[0]!.pubDate).toBe("some-random-string");
 });

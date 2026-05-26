@@ -1,0 +1,79 @@
+# Calendar Ingestor — the canonical OAuth-using ingestor.
+#
+# Counterpart to rss-ingestor: same lifecycle (scheduled trigger →
+# fetch → cursor.set → memory.upsert) but adds the OAuth surface.
+# Google Calendar is the provider because its API has well-defined
+# incremental sync (`syncToken`), making the cursor.get/set loop
+# nontrivial enough to be a real demonstration.
+#
+# What this exercises that rss-ingestor doesn't:
+#
+#   - manifest oauth: block with provider=google (well-known)
+#   - runtime's per-user client_id store (set once at install
+#     time via the dashboard or POST /console/oauth/clients/google)
+#   - oauth.access_token MCP tool — the capsule's only OAuth API
+#   - transparent refresh-token rotation handled by the runtime
+#
+# The capsule code is mercifully small. The runtime does the
+# OAuth heavy lifting; the capsule just calls
+# `runtime.oauth.accessToken()` whenever it needs a bearer.
+
+spec_version: "0.1"
+
+name: calendar-ingestor
+version: 0.1.0
+
+author:
+  name: Loamss contributors
+  url: https://github.com/loamss/loamss
+
+roles:
+  - ingestor
+
+permissions:
+  - capability: memory.write
+    scope:
+      entities: ["calendar-event"]
+    rationale: |
+      Writes one memory entry per calendar event under namespace
+      "calendar-<calendarId>". Includes participants in
+      metadata.entities so the memory layer can resolve people.
+
+  - capability: external.http
+    scope:
+      hosts:
+        - "www.googleapis.com"
+      methods: ["GET"]
+      max_bytes: 5242880
+    rationale: |
+      Fetches events from the Google Calendar v3 API. Scoped to
+      googleapis.com — the capsule cannot reach any other host.
+
+ingestor:
+  source_id: source:calendar
+  schedule:
+    interval: 15m
+    initial: 30s
+  on_trigger: sync
+
+oauth:
+  provider: google                # well-known; endpoints from runtime registry
+  scopes:
+    - https://www.googleapis.com/auth/calendar.readonly
+  extra_params:
+    access_type: offline          # google requires this on the FIRST consent
+    prompt: consent               # to return a refresh_token
+    include_granted_scopes: "true"
+
+tools:
+  - name: sync
+    description: |
+      Walk every configured calendar, upsert events that changed
+      since the last cursor, and advance the cursor. Invoked by
+      the runtime's scheduler.
+    input_schema:
+      type: object
+
+description: "Reference ingestor capsule — pulls Google Calendar events into memory."
+tags: [ingestor, calendar, oauth, reference]
+license: Apache-2.0
