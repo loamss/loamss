@@ -544,6 +544,21 @@ export interface ConsoleState {
 			last_sync_status: string; // "success" | "error" | "running" | ""
 			summary?: Record<string, unknown>;
 			added_at: string;
+
+			// owner_capsule names the capsule whose ingestor manifest
+			// brought this row into being. Empty for in-tree sources.
+			owner_capsule?: string;
+
+			// auth_provider is the OAuth provider this source's owner
+			// capsule targets, when its manifest declares one. Empty
+			// when the capsule has no oauth block or the source is
+			// in-tree.
+			auth_provider?: string;
+
+			// auth_required is true when the user needs to complete
+			// the OAuth flow before this source can sync. Drives the
+			// "Connect <provider>" button on SourcesPane.
+			auth_required?: boolean;
 		}>;
 		error?: string;
 	};
@@ -975,6 +990,85 @@ export async function deleteOAuthClient(
 		);
 		if (resp.ok) {
 			return { ok: true, provider };
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+/*
+ * ---------- OAuth flow drive --------------------------------------
+ *
+ * Kicks off + polls the runtime-driven OAuth flow for an ingestor
+ * capsule. The runtime owns the entire flow (PKCE + browser open +
+ * loopback listener + token exchange) — these endpoints just let
+ * the dashboard trigger it and watch for completion.
+ *
+ * Wire:
+ *   POST /console/oauth/begin?capsule=<name>  → 202 with flow_id + auth_url
+ *   GET  /console/oauth/status?capsule=<name> → { connected: bool }
+ */
+
+export interface OAuthBeginResponse {
+	flow_id: string;
+	auth_url: string;
+	redirect_uri: string;
+}
+
+export type BeginOAuthFlowResult =
+	| { ok: true; data: OAuthBeginResponse }
+	| { ok: false; reason: string };
+
+export async function beginOAuthFlow(
+	capsule: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<BeginOAuthFlowResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/oauth/begin?capsule=${encodeURIComponent(capsule)}`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				signal: opts.signal,
+			},
+		);
+		if (resp.ok) {
+			const body = (await resp.json()) as OAuthBeginResponse & {
+				ok?: boolean;
+			};
+			return { ok: true, data: body };
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+export type OAuthStatusResult =
+	| { ok: true; connected: boolean }
+	| { ok: false; reason: string };
+
+export async function getOAuthStatus(
+	capsule: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<OAuthStatusResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/oauth/status?capsule=${encodeURIComponent(capsule)}`,
+			{ signal: opts.signal },
+		);
+		if (resp.ok) {
+			const body = (await resp.json()) as { connected?: boolean };
+			return { ok: true, connected: !!body.connected };
 		}
 		return { ok: false, reason: await extractError(resp) };
 	} catch (err) {

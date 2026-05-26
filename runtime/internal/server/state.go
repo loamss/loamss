@@ -113,6 +113,20 @@ type consoleSource struct {
 	LastSyncStatus string         `json:"last_sync_status"` // "success", "error", "running", or "" (never synced)
 	Summary        map[string]any `json:"summary,omitempty"`
 	AddedAt        string         `json:"added_at"`
+
+	// OwnerCapsule names the capsule whose ingestor manifest brought
+	// this source row into being. Empty for in-tree sources.
+	OwnerCapsule string `json:"owner_capsule,omitempty"`
+
+	// AuthProvider is the OAuth provider name (e.g. "google") this
+	// source's owning capsule declares in its manifest. Empty when
+	// the capsule has no oauth block, or when this row is in-tree.
+	AuthProvider string `json:"auth_provider,omitempty"`
+
+	// AuthRequired is true when the source needs the user to
+	// complete the OAuth flow before it can sync. Drives the
+	// "Connect <provider>" button on the dashboard's Sources pane.
+	AuthRequired bool `json:"auth_required,omitempty"`
 }
 
 type consoleCapsulesBlock struct {
@@ -282,14 +296,23 @@ func (s *Server) collectSources(ctx context.Context) consoleSourcesBlock {
 		s.logger.Warn("console state: listing sources", "err", err)
 		return consoleSourcesBlock{Available: true, Items: []consoleSource{}, Error: err.Error()}
 	}
+	probe, _ := s.oauthBeginner.(CapsuleAuthStateProbe)
 	items := make([]consoleSource, 0, len(list))
 	for _, c := range list {
-		items = append(items, sourceToConsole(c))
+		items = append(items, s.sourceToConsole(ctx, c, probe))
 	}
 	return consoleSourcesBlock{Available: true, Items: items}
 }
 
-func sourceToConsole(c source.Configured) consoleSource {
+// sourceToConsole builds the dashboard-facing view of one source
+// row. For capsule-owned rows it also resolves the OAuth provider
+// (if the capsule's manifest declares one) and whether the
+// refresh token is already stored, so the dashboard's SourcesPane
+// can render the "Connect <provider>" button vs. "Connected"
+// without an extra round-trip per row.
+func (s *Server) sourceToConsole(
+	ctx context.Context, c source.Configured, probe CapsuleAuthStateProbe,
+) consoleSource {
 	cs := consoleSource{
 		ID:             c.ID,
 		Name:           c.Name,
@@ -297,9 +320,24 @@ func sourceToConsole(c source.Configured) consoleSource {
 		LastSyncStatus: c.LastSyncStatus,
 		Summary:        c.LastSyncSummary,
 		AddedAt:        c.AddedAt.Format(time.RFC3339Nano),
+		OwnerCapsule:   c.OwnerCapsule,
 	}
 	if !c.LastSyncAt.IsZero() {
 		cs.LastSyncAt = c.LastSyncAt.Format(time.RFC3339Nano)
+	}
+	// OAuth state — only meaningful for capsule-backed rows whose
+	// manifest declared an oauth: block.
+	if c.OwnerCapsule != "" && s.capsules != nil {
+		if installed, err := s.capsules.Get(ctx, c.OwnerCapsule); err == nil &&
+			installed.Manifest != nil && installed.Manifest.OAuth != nil {
+			cs.AuthProvider = installed.Manifest.OAuth.Provider
+			cs.AuthRequired = true // assume true; flip below if probe says otherwise
+			if probe != nil {
+				if connected, _ := probe.CapsuleHasOAuthToken(ctx, c.OwnerCapsule); connected {
+					cs.AuthRequired = false
+				}
+			}
+		}
 	}
 	return cs
 }

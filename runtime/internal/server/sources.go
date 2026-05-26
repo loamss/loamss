@@ -115,9 +115,12 @@ func (s *Server) handleSourceAdd(w http.ResponseWriter, r *http.Request) {
 	})
 
 	s.logger.Info("console source add", "name", added.Name, "adapter", added.AdapterID)
+	// Added rows are in-tree by construction (POST /console/sources
+	// doesn't take an owner_capsule), so they carry no OAuth state.
+	// Pass a nil probe to the helper — it skips the lookup.
 	writeJSON(w, http.StatusCreated, sourceAddResponse{
 		OK:     true,
-		Source: sourceToConsole(*added),
+		Source: s.sourceToConsole(r.Context(), *added, nil),
 	})
 }
 
