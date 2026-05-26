@@ -282,10 +282,21 @@ func TestWaitForApproval_ReturnsResolvedState(t *testing.T) {
 	res, _ := e.Check(ctx, CheckRequest{Principal: p, Capability: "memory.read"})
 
 	// Resolve from another goroutine after a delay.
+	//
+	// `done` synchronizes the goroutine with the test's Cleanup: the
+	// goroutine may still be writing the resolution audit entry by the
+	// time WaitForApproval observes the new state (the state DB update
+	// is sequenced *before* the audit write). Without this barrier
+	// t.Cleanup can close the audit writer mid-write and the test
+	// crashes with a nil-DB panic from another goroutine. The race
+	// was visible on CI under load.
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		time.Sleep(50 * time.Millisecond)
 		_ = e.ResolveApproval(ctx, res.ApprovalID, ApprovalGranted, "user", "")
 	}()
+	t.Cleanup(func() { <-done })
 
 	wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
