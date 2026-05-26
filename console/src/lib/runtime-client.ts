@@ -836,3 +836,151 @@ export async function applyConsoleInit(
 		};
 	}
 }
+
+/*
+ * ---------- OAuth client management --------------------------------
+ *
+ * Backed by the runtime's /console/oauth/* endpoints:
+ *
+ *   GET    /console/oauth/clients              — list (secrets redacted to "(set)")
+ *   POST   /console/oauth/clients/{provider}   — register / update
+ *   DELETE /console/oauth/clients/{provider}   — remove
+ *   GET    /console/oauth/providers            — well-known providers list
+ *
+ * The store is per-user: one client_id per provider, shared across
+ * every capsule that targets that provider. Setting up Google once
+ * unlocks every Google-using capsule the user installs later
+ * (calendar-ingestor today, drive-ingestor / gmail-ingestor / ...
+ * when they ship). See docs/capsule-ingestor-primitives.md §4.
+ */
+
+export interface OAuthClient {
+	provider: string;
+	client_id: string;
+	client_secret?: string; // redacted to "(set)" by the runtime on GET
+	created_at?: string;
+	updated_at?: string;
+}
+
+export interface OAuthProviderInfo {
+	name: string;
+}
+
+export type ListOAuthClientsResult =
+	| { ok: true; clients: OAuthClient[] }
+	| { ok: false; reason: string };
+
+export async function listOAuthClients(
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<ListOAuthClientsResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(`${baseUrl}/console/oauth/clients`, {
+			signal: opts.signal,
+		});
+		if (resp.ok) {
+			const body = (await resp.json()) as { clients?: OAuthClient[] };
+			return { ok: true, clients: body.clients ?? [] };
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+export type ListOAuthProvidersResult =
+	| { ok: true; providers: OAuthProviderInfo[] }
+	| { ok: false; reason: string };
+
+export async function listOAuthProviders(
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<ListOAuthProvidersResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(`${baseUrl}/console/oauth/providers`, {
+			signal: opts.signal,
+		});
+		if (resp.ok) {
+			const body = (await resp.json()) as { providers?: OAuthProviderInfo[] };
+			return { ok: true, providers: body.providers ?? [] };
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+export interface SetOAuthClientInput {
+	provider: string;
+	clientId: string;
+	clientSecret?: string;
+}
+
+export type SetOAuthClientResult =
+	| { ok: true; provider: string }
+	| { ok: false; reason: string };
+
+export async function setOAuthClient(
+	input: SetOAuthClientInput,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<SetOAuthClientResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/oauth/clients/${encodeURIComponent(input.provider)}`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					client_id: input.clientId,
+					...(input.clientSecret ? { client_secret: input.clientSecret } : {}),
+				}),
+				signal: opts.signal,
+			},
+		);
+		if (resp.ok) {
+			return { ok: true, provider: input.provider };
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+export type DeleteOAuthClientResult =
+	| { ok: true; provider: string }
+	| { ok: false; reason: string };
+
+export async function deleteOAuthClient(
+	provider: string,
+	opts: { baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<DeleteOAuthClientResult> {
+	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
+	try {
+		const resp = await fetch(
+			`${baseUrl}/console/oauth/clients/${encodeURIComponent(provider)}`,
+			{
+				method: "DELETE",
+				signal: opts.signal,
+			},
+		);
+		if (resp.ok) {
+			return { ok: true, provider };
+		}
+		return { ok: false, reason: await extractError(resp) };
+	} catch (err) {
+		return {
+			ok: false,
+			reason: err instanceof Error ? err.message : String(err),
+		};
+	}
+}

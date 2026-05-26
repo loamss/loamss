@@ -8,6 +8,7 @@ import { CapsulesPane } from "./CapsulesPane";
 import { ClientsPane } from "./ClientsPane";
 import { ApprovalsPane } from "./ApprovalsPane";
 import { ActivityPane } from "./ActivityPane";
+import { OAuthClientsPane } from "./OAuthClientsPane";
 
 /*
  * DashboardShell — the post-wizard landing.
@@ -91,6 +92,7 @@ export function DashboardShell() {
           <div className="lg:col-span-2 space-y-12">
             <SourcesPane block={state?.sources} />
             <CapsulesPane block={state?.capsules} />
+            <OAuthClientsPane />
             <ClientsPane block={state?.clients} />
           </div>
           <div>
