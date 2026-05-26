@@ -1,0 +1,63 @@
+spec_version: "0.1"
+name: calendar-ingestor
+version: 0.1.0
+author:
+  name: somebody@example.com
+  url: https://github.com/example/loamss-calendar-ingestor
+
+roles:
+  - ingestor
+
+permissions:
+  - capability: memory.write
+    rationale: Writes calendar events into memory under namespace=calendar.
+  - capability: credentials.read
+    rationale: Reads stored OAuth tokens to call the Calendar API.
+  - capability: credentials.write
+    rationale: Persists OAuth tokens after authentication.
+  - capability: external.http
+    scope:
+      hosts: ["www.googleapis.com"]
+    rationale: Calls the Google Calendar API.
+
+ingestor:
+  source_id: source:calendar
+  schedule:
+    interval: 15m
+    initial: 30s
+  on_trigger: sync
+
+oauth:
+  provider: google
+  authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
+  token_endpoint: https://oauth2.googleapis.com/token
+  scopes:
+    - https://www.googleapis.com/auth/calendar.readonly
+  client_id_env: GOOGLE_OAUTH_CLIENT_ID
+  pkce: true
+
+tools:
+  - name: sync
+    description: Sync calendar events since the last cursor.
+    input_schema:
+      type: object
+  - name: authenticate
+    description: Begin the OAuth flow. The user gets a URL to open.
+    input_schema:
+      type: object
+
+model_requirements:
+  capabilities: []
+  forbidden_data_classes: []
+
+runtime:
+  type: subprocess
+  entrypoint: ["node", "code/server.js"]
+  protocol: mcp
+  resources:
+    memory_mb: 128
+    cpu_quota: 0.25
+
+description: "Ingest Google Calendar events into Loamss memory."
+tags: [calendar, ingestor]
+license: Apache-2.0

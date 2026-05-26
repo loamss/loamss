@@ -262,6 +262,199 @@ func TestValidate_RejectsBadMemoryExtensionNamespace(t *testing.T) {
 	}
 }
 
+// --- ingestor + oauth manifest blocks ----------------------------
+
+func ingestorFixtureRegistry() *fakeRegistry {
+	return newFakeRegistry(
+		"memory.write", "credentials.read", "credentials.write", "external.http",
+	)
+}
+
+func TestParse_ValidCalendarIngestor(t *testing.T) {
+	m, err := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(m.Roles) != 1 || m.Roles[0] != "ingestor" {
+		t.Errorf("roles: %v", m.Roles)
+	}
+	if m.Ingestor == nil {
+		t.Fatal("ingestor block missing")
+	}
+	if m.Ingestor.SourceID != "source:calendar" {
+		t.Errorf("source_id: %q", m.Ingestor.SourceID)
+	}
+	if m.Ingestor.Schedule.Interval != "15m" || m.Ingestor.Schedule.Initial != "30s" {
+		t.Errorf("schedule: %+v", m.Ingestor.Schedule)
+	}
+	if m.Ingestor.OnTrigger != "sync" {
+		t.Errorf("on_trigger: %q", m.Ingestor.OnTrigger)
+	}
+	if m.OAuth == nil {
+		t.Fatal("oauth block missing")
+	}
+	if m.OAuth.Provider != "google" {
+		t.Errorf("oauth.provider: %q", m.OAuth.Provider)
+	}
+	if !m.OAuth.PKCE {
+		t.Error("oauth.pkce should be true")
+	}
+	if m.OAuth.ClientIDEnv != "GOOGLE_OAUTH_CLIENT_ID" {
+		t.Errorf("oauth.client_id_env: %q", m.OAuth.ClientIDEnv)
+	}
+}
+
+func TestValidate_IngestorHappyPath(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	if err := m.Validate(ingestorFixtureRegistry()); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
+
+func TestValidate_RejectsUnknownRole(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.Roles = []string{"ingestor", "wizard"}
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), `"wizard" is not a known role`) {
+		t.Errorf("expected unknown-role error: %v", err)
+	}
+}
+
+func TestValidate_RejectsDuplicateRole(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.Roles = []string{"ingestor", "ingestor"}
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "listed more than once") {
+		t.Errorf("expected duplicate-role error: %v", err)
+	}
+}
+
+func TestValidate_IngestorRoleRequiresBlock(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.Ingestor = nil
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "ingestor: block is required") {
+		t.Errorf("expected ingestor-required error: %v", err)
+	}
+}
+
+func TestValidate_IngestorBlockRequiresRole(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.Roles = nil
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "roles does not contain") {
+		t.Errorf("expected role-required error: %v", err)
+	}
+}
+
+func TestValidate_RejectsBadSourceID(t *testing.T) {
+	cases := []string{
+		"calendar",         // missing source: prefix
+		"source:Calendar",  // uppercase
+		"source:1calendar", // leading digit
+		"source:cal_endar", // underscore
+		"src:calendar",     // wrong namespace
+	}
+	for _, sid := range cases {
+		m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+		m.Ingestor.SourceID = sid
+		if err := m.Validate(ingestorFixtureRegistry()); err == nil {
+			t.Errorf("source_id %q should be rejected", sid)
+		}
+	}
+}
+
+func TestValidate_RejectsBadInterval(t *testing.T) {
+	cases := []struct {
+		interval string
+		wantMsg  string
+	}{
+		{"", "interval is required"},
+		{"oops", "invalid"},
+		{"30s", "< min"},
+		{"48h", "> max"},
+	}
+	for _, c := range cases {
+		m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+		m.Ingestor.Schedule.Interval = c.interval
+		err := m.Validate(ingestorFixtureRegistry())
+		if err == nil || !strings.Contains(err.Error(), c.wantMsg) {
+			t.Errorf("interval %q: want %q in err, got %v", c.interval, c.wantMsg, err)
+		}
+	}
+}
+
+func TestValidate_RejectsBadInitial(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.Ingestor.Schedule.Initial = "not-a-duration"
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "schedule.initial") {
+		t.Errorf("expected initial error: %v", err)
+	}
+}
+
+func TestValidate_RejectsOnTriggerNotInTools(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.Ingestor.OnTrigger = "ghost"
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "does not reference any declared tool") {
+		t.Errorf("expected on_trigger error: %v", err)
+	}
+}
+
+func TestValidate_RejectsHTTPOAuthEndpoint(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.OAuth.AuthorizationEndpoint = "http://accounts.google.com/o/oauth2/v2/auth"
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "must use https://") {
+		t.Errorf("expected https error: %v", err)
+	}
+}
+
+func TestValidate_RejectsEmptyOAuthScopes(t *testing.T) {
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.OAuth.Scopes = nil
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "scopes") {
+		t.Errorf("expected scopes error: %v", err)
+	}
+}
+
+func TestValidate_RejectsBadClientIDEnv(t *testing.T) {
+	cases := []string{
+		"lowercase_var",
+		"WITH-DASH",
+		"WITH SPACE",
+		"123_LEADING_DIGIT",
+		"",
+	}
+	for _, ev := range cases {
+		m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+		m.OAuth.ClientIDEnv = ev
+		if err := m.Validate(ingestorFixtureRegistry()); err == nil {
+			t.Errorf("client_id_env %q should be rejected", ev)
+		}
+	}
+}
+
+func TestValidate_OAuthOptionalForNonIngestors(t *testing.T) {
+	// A capsule may declare oauth without being an ingestor — e.g. an
+	// actuator that posts to a third-party platform. The two blocks
+	// are independent.
+	m, _ := Parse(loadFixture(t, "valid-email-drafter.yaml"))
+	m.OAuth = &OAuthSpec{
+		Provider:              "github",
+		AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
+		TokenEndpoint:         "https://github.com/login/oauth/access_token",
+		Scopes:                []string{"repo"},
+		ClientIDEnv:           "GITHUB_OAUTH_CLIENT_ID",
+		PKCE:                  true,
+	}
+	if err := m.Validate(newFakeRegistry("memory.read", "memory.write")); err != nil {
+		t.Errorf("oauth without ingestor role should validate: %v", err)
+	}
+}
+
 func TestValidate_AggregatesMultipleErrors(t *testing.T) {
 	// Give the validator multiple distinct failures and assert the
 	// returned error mentions all of them. Authors get a punch list,

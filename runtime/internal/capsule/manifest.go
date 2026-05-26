@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -77,6 +78,25 @@ type Manifest struct {
 	// capsule wants registered. See capsule-spec.md §Memory
 	// extensions for namespacing rules.
 	MemoryExtensions *MemoryExtensions `yaml:"memory_extensions,omitempty" json:"memory_extensions,omitempty"`
+
+	// Roles enumerates the capsule taxonomy roles this capsule plays.
+	// Allowed values: ingestor, organizer, exposer, actuator (a capsule
+	// may wear multiple roles). When "ingestor" is present, the
+	// Ingestor block must be set. See capsule-spec.md §Roles +
+	// extensibility.md §"the capsule taxonomy roles".
+	Roles []string `yaml:"roles,omitempty" json:"roles,omitempty"`
+
+	// Ingestor configures the capsule as a data-source connector
+	// (see docs/capsule-ingestor-primitives.md). Required when "ingestor"
+	// appears in Roles; ignored otherwise.
+	Ingestor *IngestorSpec `yaml:"ingestor,omitempty" json:"ingestor,omitempty"`
+
+	// OAuth declares an OAuth 2.0 authorization flow the runtime
+	// drives on the capsule's behalf — the runtime owns the loopback
+	// listener, does the token exchange, and forwards the result to
+	// the capsule via the loamss.oauth.completed callback. Optional;
+	// any capsule role can use it (ingestors typically do).
+	OAuth *OAuthSpec `yaml:"oauth,omitempty" json:"oauth,omitempty"`
 
 	// Optional metadata fields. Surfaced in the registry; not
 	// inspected by the runtime.
@@ -208,6 +228,80 @@ type EntityType struct {
 type EmbeddingSpec struct {
 	SourceFields []string `yaml:"source_fields" json:"source_fields"`
 	ModelTask    string   `yaml:"model_task,omitempty" json:"model_task,omitempty"`
+}
+
+// IngestorSpec configures an ingestor-role capsule. See the design
+// in docs/capsule-ingestor-primitives.md.
+type IngestorSpec struct {
+	// SourceID is the canonical adapter id under which this capsule
+	// registers as a source — e.g. "source:calendar-ingestor".
+	// `loamss source list` shows the capsule alongside in-tree
+	// connectors using this id.
+	SourceID string `yaml:"source_id" json:"source_id"`
+
+	// Schedule sets the cadence the runtime drives the capsule's
+	// sync callback on. Required for ingestor capsules — there's no
+	// useful "pull data" model without one.
+	Schedule IngestorSchedule `yaml:"schedule" json:"schedule"`
+
+	// OnTrigger is the name of the capsule-side tool the runtime
+	// invokes at each tick. Must reference one of the names in
+	// Tools[]. Typically "sync".
+	OnTrigger string `yaml:"on_trigger" json:"on_trigger"`
+}
+
+// IngestorSchedule is the manifest-declared cadence for an
+// ingestor's sync callback. Values use Go's time.ParseDuration
+// short form (e.g. "5m", "15m", "1h").
+type IngestorSchedule struct {
+	// Interval is the cadence between scheduled syncs. Min 1m, max
+	// 24h — anything faster overwhelms typical provider APIs;
+	// anything slower means the user gets stale data and should
+	// just sync on demand.
+	Interval string `yaml:"interval" json:"interval"`
+
+	// Initial, when set, schedules the first sync this long after
+	// install. Use for UX (user sees data quickly without burning
+	// a full Interval of API quota). Defaults to Interval when
+	// absent.
+	Initial string `yaml:"initial,omitempty" json:"initial,omitempty"`
+}
+
+// OAuthSpec declares the OAuth 2.0 flow a capsule needs. The
+// runtime owns the loopback listener and the token exchange; the
+// capsule receives the resulting tokens via
+// loamss.oauth.completed and persists them via credentials.set.
+type OAuthSpec struct {
+	// Provider is the identifier the user sees in the consent UI
+	// and in audit entries. Free-form (e.g. "google", "github").
+	Provider string `yaml:"provider" json:"provider"`
+
+	// AuthorizationEndpoint is the provider's OAuth start URL.
+	// Must be https:// — the runtime refuses http:// to avoid
+	// leaking codes/states in transit.
+	AuthorizationEndpoint string `yaml:"authorization_endpoint" json:"authorization_endpoint"`
+
+	// TokenEndpoint is the provider's token-exchange URL. The
+	// runtime POSTs here with the captured authorization code +
+	// PKCE verifier. Must be https://.
+	TokenEndpoint string `yaml:"token_endpoint" json:"token_endpoint"`
+
+	// Scopes is the list of OAuth scopes to request. At least one
+	// must be declared so the user can see what's being asked for
+	// at install time.
+	Scopes []string `yaml:"scopes" json:"scopes"`
+
+	// ClientIDEnv is the name of the environment variable the
+	// runtime reads to get the OAuth client_id. The client_id
+	// itself is per-installation (the user creates one in their
+	// own provider account); the manifest only names where the
+	// runtime should look.
+	ClientIDEnv string `yaml:"client_id_env" json:"client_id_env"`
+
+	// PKCE turns on RFC 7636 Proof Key for Code Exchange. Strongly
+	// recommended for native/desktop OAuth where a client secret
+	// can't be confidentially held.
+	PKCE bool `yaml:"pkce,omitempty" json:"pkce,omitempty"`
 }
 
 // --- parsing -----------------------------------------------------------
@@ -380,6 +474,77 @@ func (m *Manifest) Validate(reg CapabilityRegistry) error {
 		collect(fmt.Errorf("runtime.resources.cpu_quota must be >= 0, got %v", m.Runtime.Resources.CPUQuota))
 	}
 
+	// --- roles -----------------------------------------------------
+	rolesSet := make(map[string]bool, len(m.Roles))
+	for i, role := range m.Roles {
+		if !knownCapsuleRoles[role] {
+			collect(fmt.Errorf("roles[%d]: %q is not a known role (ingestor | organizer | exposer | actuator)", i, role))
+		}
+		if rolesSet[role] {
+			collect(fmt.Errorf("roles[%d]: %q is listed more than once", i, role))
+		}
+		rolesSet[role] = true
+	}
+
+	// --- ingestor --------------------------------------------------
+	if rolesSet["ingestor"] && m.Ingestor == nil {
+		collect(errors.New("ingestor: block is required when roles contains \"ingestor\""))
+	}
+	if m.Ingestor != nil {
+		if !rolesSet["ingestor"] {
+			collect(errors.New("ingestor: block is set but roles does not contain \"ingestor\""))
+		}
+		if m.Ingestor.SourceID == "" {
+			collect(errors.New("ingestor.source_id is required"))
+		} else if !sourceIDRegex.MatchString(m.Ingestor.SourceID) {
+			collect(fmt.Errorf("ingestor.source_id %q invalid (must match %s)", m.Ingestor.SourceID, sourceIDRegex.String()))
+		}
+		if m.Ingestor.Schedule.Interval == "" {
+			collect(errors.New("ingestor.schedule.interval is required"))
+		} else if d, err := time.ParseDuration(m.Ingestor.Schedule.Interval); err != nil {
+			collect(fmt.Errorf("ingestor.schedule.interval %q invalid: %v", m.Ingestor.Schedule.Interval, err))
+		} else if d < ingestorMinInterval {
+			collect(fmt.Errorf("ingestor.schedule.interval %v < min %v (faster cadences overwhelm typical provider APIs)", d, ingestorMinInterval))
+		} else if d > ingestorMaxInterval {
+			collect(fmt.Errorf("ingestor.schedule.interval %v > max %v (slower than this and the user should just sync on demand)", d, ingestorMaxInterval))
+		}
+		if m.Ingestor.Schedule.Initial != "" {
+			if _, err := time.ParseDuration(m.Ingestor.Schedule.Initial); err != nil {
+				collect(fmt.Errorf("ingestor.schedule.initial %q invalid: %v", m.Ingestor.Schedule.Initial, err))
+			}
+		}
+		if m.Ingestor.OnTrigger == "" {
+			collect(errors.New("ingestor.on_trigger is required (name of the capsule tool the scheduler invokes)"))
+		} else if !toolNames[m.Ingestor.OnTrigger] {
+			collect(fmt.Errorf("ingestor.on_trigger %q does not reference any declared tool", m.Ingestor.OnTrigger))
+		}
+	}
+
+	// --- oauth -----------------------------------------------------
+	if m.OAuth != nil {
+		if m.OAuth.Provider == "" {
+			collect(errors.New("oauth.provider is required"))
+		}
+		if m.OAuth.AuthorizationEndpoint == "" {
+			collect(errors.New("oauth.authorization_endpoint is required"))
+		} else if !strings.HasPrefix(m.OAuth.AuthorizationEndpoint, "https://") {
+			collect(fmt.Errorf("oauth.authorization_endpoint %q must use https:// (auth codes and state leak over plaintext)", m.OAuth.AuthorizationEndpoint))
+		}
+		if m.OAuth.TokenEndpoint == "" {
+			collect(errors.New("oauth.token_endpoint is required"))
+		} else if !strings.HasPrefix(m.OAuth.TokenEndpoint, "https://") {
+			collect(fmt.Errorf("oauth.token_endpoint %q must use https://", m.OAuth.TokenEndpoint))
+		}
+		if len(m.OAuth.Scopes) == 0 {
+			collect(errors.New("oauth.scopes must declare at least one scope (so users see what's being requested at install)"))
+		}
+		if m.OAuth.ClientIDEnv == "" {
+			collect(errors.New("oauth.client_id_env is required (the env var name the runtime reads for the per-install OAuth client_id)"))
+		} else if !envVarRegex.MatchString(m.OAuth.ClientIDEnv) {
+			collect(fmt.Errorf("oauth.client_id_env %q invalid (must match %s)", m.OAuth.ClientIDEnv, envVarRegex.String()))
+		}
+	}
+
 	// --- memory_extensions -----------------------------------------
 	if m.MemoryExtensions != nil {
 		for i, et := range m.MemoryExtensions.EntityTypes {
@@ -448,4 +613,23 @@ var (
 	toolNameRegex   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._]*$`)
 	semverRegex     = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	reverseDNSRegex = regexp.MustCompile(`^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+$`)
+	sourceIDRegex   = regexp.MustCompile(`^source:[a-z][a-z0-9-]*$`)
+	envVarRegex     = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+)
+
+// knownCapsuleRoles is the closed set of values allowed in
+// manifest.roles. Matches extensibility.md §"the capsule taxonomy
+// roles". The list is intentionally closed — adding a role is a
+// spec-bearing decision, not something a capsule author should do.
+var knownCapsuleRoles = map[string]bool{
+	"ingestor":  true,
+	"organizer": true,
+	"exposer":   true,
+	"actuator":  true,
+}
+
+// ingestor schedule bounds.
+const (
+	ingestorMinInterval = time.Minute
+	ingestorMaxInterval = 24 * time.Hour
 )
