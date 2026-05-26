@@ -268,41 +268,49 @@ type IngestorSchedule struct {
 }
 
 // OAuthSpec declares the OAuth 2.0 flow a capsule needs. The
-// runtime owns the loopback listener and the token exchange; the
-// capsule receives the resulting tokens via
-// loamss.oauth.completed and persists them via credentials.set.
+// runtime owns the entire flow: it opens the browser, holds the
+// PKCE verifier, exchanges the code for tokens, persists them
+// under the capsule's credential blob, and refreshes them on
+// demand. The capsule's only OAuth surface is `oauth.access_token`.
+//
+// See docs/capsule-ingestor-primitives.md §4 "OAuth callback
+// bridge (revised)" for the design.
 type OAuthSpec struct {
-	// Provider is the identifier the user sees in the consent UI
-	// and in audit entries. Free-form (e.g. "google", "github").
+	// Provider is the well-known provider identifier ("google",
+	// "github", …) the runtime uses to look up endpoints. For
+	// providers not in the well-known registry, declare endpoints
+	// inline via AuthorizationEndpoint + TokenEndpoint.
 	Provider string `yaml:"provider" json:"provider"`
 
-	// AuthorizationEndpoint is the provider's OAuth start URL.
-	// Must be https:// — the runtime refuses http:// to avoid
-	// leaking codes/states in transit.
-	AuthorizationEndpoint string `yaml:"authorization_endpoint" json:"authorization_endpoint"`
+	// AuthorizationEndpoint is required only when Provider is
+	// NOT in the runtime's well-known registry. Must be https://.
+	AuthorizationEndpoint string `yaml:"authorization_endpoint,omitempty" json:"authorization_endpoint,omitempty"`
 
-	// TokenEndpoint is the provider's token-exchange URL. The
-	// runtime POSTs here with the captured authorization code +
-	// PKCE verifier. Must be https://.
-	TokenEndpoint string `yaml:"token_endpoint" json:"token_endpoint"`
+	// TokenEndpoint is required only when Provider is NOT in the
+	// runtime's well-known registry. Must be https://.
+	TokenEndpoint string `yaml:"token_endpoint,omitempty" json:"token_endpoint,omitempty"`
 
 	// Scopes is the list of OAuth scopes to request. At least one
 	// must be declared so the user can see what's being asked for
 	// at install time.
 	Scopes []string `yaml:"scopes" json:"scopes"`
 
-	// ClientIDEnv is the name of the environment variable the
-	// runtime reads to get the OAuth client_id. The client_id
-	// itself is per-installation (the user creates one in their
-	// own provider account); the manifest only names where the
-	// runtime should look.
-	ClientIDEnv string `yaml:"client_id_env" json:"client_id_env"`
-
-	// PKCE turns on RFC 7636 Proof Key for Code Exchange. Strongly
-	// recommended for native/desktop OAuth where a client secret
-	// can't be confidentially held.
-	PKCE bool `yaml:"pkce,omitempty" json:"pkce,omitempty"`
+	// ExtraParams are provider-specific query parameters the
+	// runtime adds to the authorization URL on top of the
+	// provider's defaults. Common Google extras (access_type,
+	// prompt) are in the well-known registry; capsules can add
+	// per-provider extras here.
+	ExtraParams map[string]string `yaml:"extra_params,omitempty" json:"extra_params,omitempty"`
 }
+
+// WellKnownOAuthProvider reports whether the given provider name
+// is in the runtime's built-in registry. Exposed so the manifest
+// validator can decide whether inline endpoints are required.
+//
+// Implemented as a package-level var so the test suite can swap in
+// a fake (the capsule package doesn't import internal/oauth to
+// avoid pulling its dependency surface into manifest validation).
+var WellKnownOAuthProvider = func(_ string) bool { return false }
 
 // --- parsing -----------------------------------------------------------
 
@@ -525,23 +533,36 @@ func (m *Manifest) Validate(reg CapabilityRegistry) error {
 		if m.OAuth.Provider == "" {
 			collect(errors.New("oauth.provider is required"))
 		}
-		if m.OAuth.AuthorizationEndpoint == "" {
-			collect(errors.New("oauth.authorization_endpoint is required"))
-		} else if !strings.HasPrefix(m.OAuth.AuthorizationEndpoint, "https://") {
-			collect(fmt.Errorf("oauth.authorization_endpoint %q must use https:// (auth codes and state leak over plaintext)", m.OAuth.AuthorizationEndpoint))
-		}
-		if m.OAuth.TokenEndpoint == "" {
-			collect(errors.New("oauth.token_endpoint is required"))
-		} else if !strings.HasPrefix(m.OAuth.TokenEndpoint, "https://") {
-			collect(fmt.Errorf("oauth.token_endpoint %q must use https://", m.OAuth.TokenEndpoint))
+		// Endpoints required only when the provider isn't in the
+		// runtime's well-known registry. The registry ships with
+		// google + github at minimum; non-well-known providers must
+		// declare endpoints inline. WellKnownOAuthProvider is wired
+		// from cli/start.go.
+		wellKnown := m.OAuth.Provider != "" && WellKnownOAuthProvider(m.OAuth.Provider)
+		if !wellKnown {
+			if m.OAuth.AuthorizationEndpoint == "" {
+				collect(errors.New("oauth.authorization_endpoint is required (provider is not in the well-known registry — must declare endpoints inline)"))
+			} else if !strings.HasPrefix(m.OAuth.AuthorizationEndpoint, "https://") {
+				collect(fmt.Errorf("oauth.authorization_endpoint %q must use https:// (auth codes and state leak over plaintext)", m.OAuth.AuthorizationEndpoint))
+			}
+			if m.OAuth.TokenEndpoint == "" {
+				collect(errors.New("oauth.token_endpoint is required (provider is not in the well-known registry — must declare endpoints inline)"))
+			} else if !strings.HasPrefix(m.OAuth.TokenEndpoint, "https://") {
+				collect(fmt.Errorf("oauth.token_endpoint %q must use https://", m.OAuth.TokenEndpoint))
+			}
+		} else {
+			// Well-known providers must NOT redeclare endpoints —
+			// avoids confusion about whose URL wins. Manifest authors
+			// override via ExtraParams, not endpoint replacement.
+			if m.OAuth.AuthorizationEndpoint != "" {
+				collect(fmt.Errorf("oauth.authorization_endpoint must NOT be set for well-known provider %q (the runtime supplies it)", m.OAuth.Provider))
+			}
+			if m.OAuth.TokenEndpoint != "" {
+				collect(fmt.Errorf("oauth.token_endpoint must NOT be set for well-known provider %q (the runtime supplies it)", m.OAuth.Provider))
+			}
 		}
 		if len(m.OAuth.Scopes) == 0 {
 			collect(errors.New("oauth.scopes must declare at least one scope (so users see what's being requested at install)"))
-		}
-		if m.OAuth.ClientIDEnv == "" {
-			collect(errors.New("oauth.client_id_env is required (the env var name the runtime reads for the per-install OAuth client_id)"))
-		} else if !envVarRegex.MatchString(m.OAuth.ClientIDEnv) {
-			collect(fmt.Errorf("oauth.client_id_env %q invalid (must match %s)", m.OAuth.ClientIDEnv, envVarRegex.String()))
 		}
 	}
 
@@ -614,7 +635,6 @@ var (
 	semverRegex     = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	reverseDNSRegex = regexp.MustCompile(`^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+$`)
 	sourceIDRegex   = regexp.MustCompile(`^source:[a-z][a-z0-9-]*$`)
-	envVarRegex     = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 )
 
 // knownCapsuleRoles is the closed set of values allowed in

@@ -211,119 +211,129 @@ The runtime supplies `started_at` and `finished_at` itself (wall-clock around th
 
 ---
 
-### 4. OAuth callback bridge
+### 4. OAuth callback bridge (revised)
 
-The runtime owns the loopback HTTP listener. The capsule declares the OAuth client metadata in the manifest; the runtime mints the auth URL, captures the code at the callback, and hands it to the capsule via a runtime → capsule callback.
+> **Design revised mid-implementation.** The original sketch had the capsule driving the flow via `oauth.begin` + `loamss.oauth.completed` callback + `oauth.refresh`. That was unnecessarily complex once the dashboard, approvals queue, and credentials store were already in place. The revised design moves the entire flow into the runtime; the capsule's only OAuth surface is `oauth.access_token`. The original is preserved at the bottom of this section for the design trail.
+
+The runtime owns the entire OAuth flow. The capsule does not see the auth code, the PKCE verifier, the redirect URI, or even the refresh token — it just asks the runtime for an access token when it needs one. The dashboard surfaces "Connect Google Calendar"-style buttons; the user clicks one, browser opens, they approve, done.
 
 #### Manifest declaration
 
 ```yaml
 oauth:
-  provider: google              # Identifier the user sees in the consent UI.
-                                # Free-form; appears in audit entries.
-  authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
-  token_endpoint: https://oauth2.googleapis.com/token
+  provider: google              # Well-known identifier; runtime knows the
+                                # endpoints + defaults. Inline endpoints below
+                                # only required when provider isn't well-known.
   scopes:
     - https://www.googleapis.com/auth/calendar.readonly
-  client_id_env: GOOGLE_OAUTH_CLIENT_ID   # The runtime reads this from the
-                                          # capsule's per-instance env (set by
-                                          # the user at install). Never the
-                                          # manifest itself — that's checked in.
-  pkce: true                    # Recommended on by default.
+  # Optional — provider-specific extras the runtime adds to the auth URL.
+  extra_params:
+    access_type: offline
+    prompt: consent
+  # Optional — endpoints required only when provider is not in the runtime's
+  # well-known registry.
+  # authorization_endpoint: https://...
+  # token_endpoint: https://...
 ```
 
-The runtime never embeds OAuth client secrets; capsules that need a confidential-client exchange either use PKCE (recommended for desktop apps) or store the secret via `credentials.set` at install time.
+Well-known providers ship in the runtime: `google`, `github` at minimum (extensible). Their endpoints + sensible defaults (PKCE always on; provider-specific extras like Google's `access_type=offline`) live in `runtime/internal/oauth/providers.go`. A capsule targeting one of those providers only needs `provider:` + `scopes:` — three lines instead of seven. Non-well-known providers fill in `authorization_endpoint` + `token_endpoint` inline.
 
-#### `oauth.begin`
+The OAuth `client_id` is **not** in the manifest. It's per-user-per-provider (the user creates one in their own Google Cloud Console etc.) and is collected at install time by the dashboard, stored separately from per-capsule data. Multiple capsules that target the same provider share the same client_id.
 
-The capsule calls this to start a flow. Typically inside a `BeginAuth`-shaped tool the runtime invokes on the user's behalf.
+#### `oauth.access_token` — the only MCP tool
 
 ```json
 {
-  "name": "oauth.begin",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "extra_params": { "type": "object", "description": "Provider-specific extras (prompt=consent, access_type=offline, …)." }
-    }
-  },
-  "outputSchema": {
-    "type": "object", "required": ["flow_id", "url"],
-    "properties": {
-      "flow_id": { "type": "string", "description": "Opaque handle; appears verbatim on the completion callback." },
-      "url": { "type": "string", "description": "The URL the user opens in their browser." }
-    }
-  }
-}
-```
-
-The runtime:
-- Picks an unused loopback port
-- Generates a PKCE verifier + state
-- Builds the auth URL from the manifest + the state + a `redirect_uri` of `http://127.0.0.1:<port>/oauth/callback/<flow_id>`
-- Stores the in-flight flow (`flow_id`, PKCE verifier, capsule install id) in `runtime.db`
-- Returns the URL
-
-The capsule is expected to surface the URL to the user (typically by returning it from the `tools/call` that started the flow). The dashboard's Approvals pane offers a "Open auth URL" button when an ingestor capsule has an in-flight flow.
-
-#### Runtime → capsule callback: `loamss.oauth.completed`
-
-When the user's browser hits the loopback, the runtime exchanges the code for tokens itself (it has everything: token endpoint, client_id from env, PKCE verifier). Then it calls a capsule-registered callback with the tokens. The capsule decides how to persist them.
-
-```json
-{
-  "method": "loamss.oauth.completed",
-  "params": {
-    "flow_id":       "flw-01HVZ...",
-    "access_token":  "ya29.a0...",
-    "refresh_token": "1//0gM...",
-    "token_type":    "Bearer",
-    "expires_at":    "2026-05-25T23:47:00Z",
-    "scope":         "https://www.googleapis.com/auth/calendar.readonly"
-  }
-}
-```
-
-The capsule's callback handler typically does:
-
-```typescript
-runtime.on("loamss.oauth.completed", async ({ refresh_token, expires_at, scope }) => {
-  await runtime.credentials.set("refresh_token", refresh_token, { expires_at });
-  await runtime.credentials.set("scope", scope);
-});
-```
-
-The access token is short-lived; the refresh token is what survives.
-
-#### Why does the runtime do the token exchange?
-
-Three reasons:
-
-1. **PKCE verifier never leaves the runtime.** The capsule asked for a flow; the runtime is the only party that needs the verifier to complete it. The capsule never sees it.
-2. **The capsule doesn't need network egress to the provider's token endpoint just for the exchange.** Reduces the capsule's attack surface and `network:` capability scope.
-3. **One implementation of the OAuth exchange.** Every capsule benefits from runtime-side hardening (rate limiting, retry, TLS pinning if we add it).
-
-The capsule still does the resource-side API calls (`https://www.googleapis.com/calendar/v3/...`) itself — that's where the connector logic lives.
-
-#### Token refresh
-
-When the capsule needs an access token, it calls a new tool:
-
-```json
-{
-  "name": "oauth.refresh",
-  "description": "Exchange the stored refresh token for a fresh access token. The runtime knows the token endpoint from the manifest.",
+  "name": "oauth.access_token",
+  "description": "Return a valid bearer access token for this capsule's OAuth provider. Refreshes transparently when the cached token is expired.",
+  "inputSchema": { "type": "object", "additionalProperties": false },
   "outputSchema": {
     "type": "object",
+    "required": ["access_token"],
     "properties": {
-      "access_token": { "type": "string" },
+      "access_token": { "type": "string", "description": "Bearer token. Use as `Authorization: Bearer <token>` against the provider's API." },
       "expires_at":   { "type": "string", "format": "date-time" }
     }
   }
 }
 ```
 
-The runtime reads the refresh token from `credentials.get("refresh_token")`, posts to the token endpoint, returns the new access token. If the refresh fails (expired refresh token, revoked grant), it returns an error with code `oauth.refresh_failed` — the capsule should surface this to the user via the existing approvals/notifications path so they re-authenticate.
+Behavior:
+
+1. Read the capsule's stored `access_token` + `expires_at` from its credentials.
+2. If still valid (≥ 60s remaining), return it.
+3. Otherwise read `refresh_token`, POST to the provider's token endpoint, store the new `access_token` + (rotated, if any) `refresh_token`, return.
+4. If refresh fails (revoked, expired, or no refresh token stored): return a tool error with code `oauth.reauth_required` AND surface a `PendingApproval` in the dashboard's Approvals pane.
+
+That's the entire capsule-side OAuth API. No callbacks, no flow management, no token storage.
+
+#### Browser flow (runtime-driven)
+
+The dashboard's Sources pane shows a "Connect <Provider>" button next to any ingestor capsule whose OAuth state is "needs auth" or "expired."
+
+```
+POST /console/oauth/begin?capsule=calendar-ingestor
+   → runtime reads the capsule's oauth manifest + the user's stored
+     client_id for that provider
+   → if no client_id stored: 400 with "set up an OAuth client first"
+   → otherwise:
+       - picks an ephemeral loopback port
+       - generates PKCE verifier + state
+       - stores flow context in runtime.db
+       - opens the browser (`open` / `xdg-open` / `start`)
+       - returns 202 { flow_id, redirect_uri }
+
+[user approves in browser → Google sends them to
+http://127.0.0.1:<ephemeral>/oauth/callback?code=...&state=...]
+
+   → ephemeral listener captures, matches state, posts code+verifier
+     to provider's /token endpoint
+   → stores access_token, refresh_token, expires_at, scope into the
+     capsule's credentials via the existing CapsuleCredentialStore
+   → ephemeral listener returns "✓ Connected — close this tab"
+   → ephemeral listener shuts down
+```
+
+The dashboard polls `/console/oauth/status?capsule=...` to update the button state. The capsule's `oauth.access_token` calls just work after this.
+
+#### Re-auth via the existing approvals queue
+
+When `oauth.access_token` finds the refresh token revoked, the runtime adds a `PendingApproval` entry of kind `oauth.reauth`. The user sees a chip in the dashboard's Approvals pane: "⚠️ calendar-ingestor lost access to Google. [Re-authenticate]." Click → same browser flow as the first time. No new surface to learn — the user already approves grants via this pane.
+
+#### Per-user client_id storage
+
+Stored in `runtime.db` under a new `oauth_clients` table, keyed by provider name. Set via:
+
+```
+POST /console/oauth/clients/{provider}
+{ "client_id": "...", "client_secret": "..." }   // client_secret optional
+```
+
+The dashboard's capsule-install flow inspects the manifest; if it declares `oauth.provider: google` and no client is stored yet, it adds a step: "Calendar Ingestor needs a Google OAuth client. [How to create one →]. Paste here:" Once set, subsequent Google capsules skip this prompt.
+
+#### Why is this safer / simpler than v1?
+
+| Concern | v1 | Revised |
+|---|---|---|
+| PKCE verifier scope | Lives in runtime | Lives in runtime |
+| Loopback listener owner | Runtime | Runtime (ephemeral, per-flow) |
+| Token storage | Capsule (via credentials.set) | Runtime (under same credentials path) |
+| MCP tools added | 3 (`oauth.begin`, `oauth.refresh`, callback) | 1 (`oauth.access_token`) |
+| Capsule SDK shape | OAuth-specific handler + 3 calls | Single call: `accessToken()` |
+| Re-auth UX | Capsule must error → user must notice | Approvals pane surface |
+| Where user finds client_id | Env var (read docs) | Dashboard prompt at install |
+
+The capsule still does the resource-side API calls (`https://www.googleapis.com/calendar/v3/...`). The runtime handles only the auth-edge plumbing.
+
+---
+
+#### v1 design (superseded; kept for the design trail)
+
+The original design called for the capsule to drive the flow via three MCP tools (`oauth.begin`, `oauth.refresh`) plus a runtime → capsule callback (`loamss.oauth.completed`). The capsule's authenticate-tool would call `oauth.begin`, get back a URL, surface it to the user, then handle the resulting tokens via the callback and persist them via `credentials.set`. Refresh worked similarly through `oauth.refresh`.
+
+That design was correct, but it forced every ingestor capsule to implement OAuth orchestration code that did the same thing every time. The revised design moves that orchestration into the runtime once and exposes only the access-token read to capsules. The runtime is now the OAuth client; the capsule is just the API consumer.
+
+The principle didn't change: the runtime holds the PKCE verifier, owns the loopback, does the token exchange, never lets the capsule see secrets it doesn't need. The revision just shifts where the work happens to better match the actual UX (one button in the dashboard, transparent token use in the capsule).
 
 ---
 
@@ -349,12 +359,10 @@ roles:
 permissions:
   - capability: memory.write
     rationale: Writes calendar events into memory under namespace=calendar.
-  - capability: credentials.read
-    rationale: Reads stored OAuth tokens to call the Calendar API.
-  - capability: credentials.write
-    rationale: Persists OAuth tokens after authentication.
-  - capability: network.fetch
-    rationale: Calls https://www.googleapis.com/calendar/v3/.
+  - capability: external.http
+    scope:
+      hosts: ["www.googleapis.com"]
+    rationale: Calls the Google Calendar API for events.
 
 ingestor:
   source_id: source:calendar
@@ -364,22 +372,20 @@ ingestor:
   on_trigger: sync
 
 oauth:
-  provider: google
-  authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
-  token_endpoint: https://oauth2.googleapis.com/token
+  provider: google                # well-known; endpoints from runtime registry
   scopes:
     - https://www.googleapis.com/auth/calendar.readonly
-  client_id_env: GOOGLE_OAUTH_CLIENT_ID
-  pkce: true
+  extra_params:
+    access_type: offline
+    prompt: consent
 
 tools:
   - name: sync
     description: Sync calendar events since the last cursor.
     input_schema: { type: object }
-  - name: authenticate
-    description: Begin the OAuth flow. The user gets a URL to open.
-    input_schema: { type: object }
 ```
+
+No `authenticate` tool, no `credentials.{read,write}` permissions. The dashboard's "Connect Google Calendar" button drives the auth flow runtime-side; the capsule isn't involved until it calls `oauth.access_token` to get a bearer for an API request.
 
 ### Capsule code (TypeScript, sketch)
 
@@ -390,20 +396,16 @@ const cap = createCapsule({
   manifest,
   tools: [
     defineTool({
-      name: "authenticate",
-      description: "Begin the OAuth flow.",
-      inputSchema: { type: "object" },
-      handler: async (_, { runtime }) => {
-        const { url } = await runtime.oauth.begin();
-        return { url, message: "Open this URL to authorize." };
-      },
-    }),
-    defineTool({
       name: "sync",
       description: "Sync calendar events since the last cursor.",
       inputSchema: { type: "object" },
       handler: async (_, { runtime }) => {
-        const { access_token } = await runtime.oauth.refresh();
+        // One call: runtime returns a valid bearer, refreshing
+        // transparently if needed. If the refresh token has been
+        // revoked, this throws oauth.reauth_required and the
+        // runtime adds an entry to the Approvals pane.
+        const { access_token } = await runtime.oauth.accessToken();
+
         const { value: cursorRaw } = await runtime.cursor.get();
         const cursor = cursorRaw ? JSON.parse(cursorRaw) : { syncToken: null };
 
@@ -427,48 +429,68 @@ const cap = createCapsule({
   ],
 });
 
-cap.on("loamss.oauth.completed", async ({ refresh_token, expires_at }, { runtime }) => {
-  await runtime.credentials.set("refresh_token", refresh_token, { expires_at });
-});
-
 cap.start();
 ```
+
+Notice what's not here: no `authenticate` tool, no `oauth.begin`, no `loamss.oauth.completed` handler, no `credentials.set` for tokens. The runtime handles all of it. The capsule is just a calendar-events-to-memory adapter.
 
 ### Lifecycle (analogous to the in-tree source lifecycle from `sources.md`)
 
 ```
 loamss capsule install ./calendar-ingestor
-   → manifest validated; user approves perms incl. credentials.{read,write}, network.fetch
+   → manifest validated; user approves perms (memory.write, external.http)
+   → dashboard detects oauth.provider=google + no client_id stored yet
+   → dashboard prompts: "Calendar Ingestor needs a Google OAuth client.
+                         Paste your client_id here:"
+   → runtime stores client_id under oauth_clients/google
    → ingestor source_id registered alongside in-tree sources
    → capsule subprocess started (persistent run mode)
 
-User clicks "Authenticate" in the dashboard's Sources pane
-   → runtime calls capsule's `authenticate` tool
-     → capsule calls `oauth.begin`
-       → runtime mints flow_id + auth URL + opens loopback listener
-   → capsule returns URL
-   → dashboard shows "Open this URL" button
+Dashboard's Sources pane shows: "calendar-ingestor — Needs auth [Connect Google]"
 
-User opens URL, approves in Google
-   → loopback captures code at http://127.0.0.1:<port>/oauth/callback/<flow_id>
-   → runtime exchanges code for tokens
-   → runtime fires loamss.oauth.completed at capsule
-     → capsule's handler calls `credentials.set("refresh_token", ...)`
+User clicks Connect Google
+   → POST /console/oauth/begin?capsule=calendar-ingestor
+   → runtime: allocates ephemeral loopback port, generates PKCE + state,
+     stores flow context, opens the browser
+
+User approves in Google
+   → loopback captures the code at the ephemeral port
+   → runtime POSTs code+verifier to oauth2.googleapis.com/token
+   → runtime stores access_token + refresh_token + expires_at +
+     scope under capsules/calendar-ingestor/credentials.json
+   → ephemeral listener returns "✓ Connected — close this tab"
+   → dashboard polls status → renders "Connected (as user@gmail.com)"
 
 15 seconds later: scheduler initial tick
    → runtime invokes capsule's `sync` tool
-     → capsule calls `oauth.refresh`, then `cursor.get`
+     → capsule calls `oauth.access_token` → runtime returns cached
+       access_token (still valid)
      → capsule fetches events from Google
      → capsule calls `memory.upsert` for each event
      → capsule calls `cursor.set` with the new syncToken
    → returns { records_added: 47 }
-   → runtime emits audit.source.sync.completed
+   → runtime emits source.sync.completed
 
-Every 15m thereafter: scheduler ticks → invokes sync → …
+Every 15m: scheduler ticks → invokes sync → access token refreshes
+transparently in the runtime when stale.
+
+A week later: user revokes calendar-ingestor's access from
+Google's third-party app dashboard.
+   → next sync: capsule calls oauth.access_token
+     → runtime tries to refresh; provider returns 400 invalid_grant
+     → runtime adds PendingApproval entry: "calendar-ingestor lost
+       access. [Re-authenticate]"
+     → oauth.access_token returns oauth.reauth_required to the capsule
+     → capsule reports records_added=0 errors=1 in its SyncResult
+   → user sees the chip in the Approvals pane, clicks Re-authenticate
+   → same browser flow as install; tokens refresh; next tick syncs
 
 loamss source remove source:calendar
    → runtime stops the capsule subprocess
-   → runtime deletes the credential blobs (credentials, cursor, in-flight oauth)
+   → runtime deletes the credential blob (cursor + tokens + everything)
+   → the per-user oauth_clients/google entry is NOT deleted — the
+     client_id is shared across Google capsules and the user might
+     install another Drive ingestor tomorrow that reuses it
 ```
 
 The user never knows the difference between in-tree and capsule. `loamss source list` shows them together. The dashboard's Sources pane lists them together. The audit log entries have the same shape.

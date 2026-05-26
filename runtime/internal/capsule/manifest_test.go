@@ -265,9 +265,7 @@ func TestValidate_RejectsBadMemoryExtensionNamespace(t *testing.T) {
 // --- ingestor + oauth manifest blocks ----------------------------
 
 func ingestorFixtureRegistry() *fakeRegistry {
-	return newFakeRegistry(
-		"memory.write", "credentials.read", "credentials.write", "external.http",
-	)
+	return newFakeRegistry("memory.write", "external.http")
 }
 
 func TestParse_ValidCalendarIngestor(t *testing.T) {
@@ -296,11 +294,8 @@ func TestParse_ValidCalendarIngestor(t *testing.T) {
 	if m.OAuth.Provider != "google" {
 		t.Errorf("oauth.provider: %q", m.OAuth.Provider)
 	}
-	if !m.OAuth.PKCE {
-		t.Error("oauth.pkce should be true")
-	}
-	if m.OAuth.ClientIDEnv != "GOOGLE_OAUTH_CLIENT_ID" {
-		t.Errorf("oauth.client_id_env: %q", m.OAuth.ClientIDEnv)
+	if m.OAuth.ExtraParams["access_type"] != "offline" {
+		t.Errorf("oauth.extra_params.access_type: %q", m.OAuth.ExtraParams["access_type"])
 	}
 }
 
@@ -403,8 +398,12 @@ func TestValidate_RejectsOnTriggerNotInTools(t *testing.T) {
 }
 
 func TestValidate_RejectsHTTPOAuthEndpoint(t *testing.T) {
+	// Switch to a non-well-known provider so the inline endpoints
+	// are exercised; check that http:// is refused.
 	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
-	m.OAuth.AuthorizationEndpoint = "http://accounts.google.com/o/oauth2/v2/auth"
+	m.OAuth.Provider = "custom-corp"
+	m.OAuth.AuthorizationEndpoint = "http://corp.example/oauth2/auth"
+	m.OAuth.TokenEndpoint = "https://corp.example/oauth2/token"
 	err := m.Validate(ingestorFixtureRegistry())
 	if err == nil || !strings.Contains(err.Error(), "must use https://") {
 		t.Errorf("expected https error: %v", err)
@@ -420,20 +419,31 @@ func TestValidate_RejectsEmptyOAuthScopes(t *testing.T) {
 	}
 }
 
-func TestValidate_RejectsBadClientIDEnv(t *testing.T) {
-	cases := []string{
-		"lowercase_var",
-		"WITH-DASH",
-		"WITH SPACE",
-		"123_LEADING_DIGIT",
-		"",
+func TestValidate_WellKnownProviderRejectsInlineEndpoints(t *testing.T) {
+	// With the runtime supplying the endpoints, inline declarations
+	// would just be confusing. Validator catches them at install.
+	// (TestMain wires WellKnownOAuthProvider to recognize "google".)
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.OAuth.AuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil || !strings.Contains(err.Error(), "must NOT be set for well-known provider") {
+		t.Errorf("expected well-known endpoint rejection: %v", err)
 	}
-	for _, ev := range cases {
-		m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
-		m.OAuth.ClientIDEnv = ev
-		if err := m.Validate(ingestorFixtureRegistry()); err == nil {
-			t.Errorf("client_id_env %q should be rejected", ev)
-		}
+}
+
+func TestValidate_NonWellKnownProviderRequiresEndpoints(t *testing.T) {
+	// Provider not in the well-known registry must declare
+	// endpoints inline. With WellKnownOAuthProvider always-false
+	// (the test default), endpoints are required.
+	m, _ := Parse(loadFixture(t, "valid-calendar-ingestor.yaml"))
+	m.OAuth.Provider = "custom-corp-sso"
+	m.OAuth.AuthorizationEndpoint = ""
+	m.OAuth.TokenEndpoint = ""
+	err := m.Validate(ingestorFixtureRegistry())
+	if err == nil ||
+		!strings.Contains(err.Error(), "authorization_endpoint is required") ||
+		!strings.Contains(err.Error(), "token_endpoint is required") {
+		t.Errorf("expected endpoint requirements for non-well-known provider: %v", err)
 	}
 }
 
@@ -443,12 +453,10 @@ func TestValidate_OAuthOptionalForNonIngestors(t *testing.T) {
 	// are independent.
 	m, _ := Parse(loadFixture(t, "valid-email-drafter.yaml"))
 	m.OAuth = &OAuthSpec{
-		Provider:              "github",
+		Provider:              "github-custom",
 		AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
 		TokenEndpoint:         "https://github.com/login/oauth/access_token",
 		Scopes:                []string{"repo"},
-		ClientIDEnv:           "GITHUB_OAUTH_CLIENT_ID",
-		PKCE:                  true,
 	}
 	if err := m.Validate(newFakeRegistry("memory.read", "memory.write")); err != nil {
 		t.Errorf("oauth without ingestor role should validate: %v", err)

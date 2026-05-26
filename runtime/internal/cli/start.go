@@ -33,6 +33,7 @@ import (
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
+	"github.com/loamss/loamss/runtime/internal/oauth"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/server"
 	"github.com/loamss/loamss/runtime/internal/source"
@@ -245,16 +246,35 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// per capsule.
 	cursorStore := mcp.NewCapsuleCursorStore(storageAdapter)
 
-	// credentials.* + cursor.* tools — only become callable now that
-	// storage is open. Registered into the same registry the runtime
-	// tools above share; dispatch is identical, just gated on the
-	// capsule-only principal check inside the handlers.
+	// OAuth machinery — per-user client store + orchestrator.
+	// The orchestrator holds the in-flight PKCE flows, owns the
+	// loopback listener on the runtime's behalf, and exchanges
+	// codes for tokens. Tokens land in the per-capsule credential
+	// blob (above), keyed under "oauth.access_token" etc.
+	oauthClients, err := oauth.OpenClientStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return fmt.Errorf("opening oauth client store: %w", err)
+	}
+	defer func() { _ = oauthClients.Close() }()
+	oauthOrch := oauth.NewOrchestrator(newCredentialStoreAdapter(credsStore), logger)
+	oauthBridge := newDaemonOAuthBridge(capStore, oauthClients, oauthOrch, logger)
+
+	// Wire the capsule package's manifest-validation hook so
+	// well-known provider names (google, github) don't require
+	// inline endpoints in capsule manifests.
+	capsule.WellKnownOAuthProvider = oauth.WellKnown
+
+	// credentials.* + cursor.* + oauth.* tools — only become callable
+	// now that storage is open. Registered into the same registry
+	// the runtime tools above share; dispatch is identical, just
+	// gated on the capsule-only principal check inside the handlers.
 	for _, t := range []mcp.Tool{
 		mcp.NewCredentialsSetTool(credsStore, auditWriter),
 		mcp.NewCredentialsGetTool(credsStore, auditWriter),
 		mcp.NewCredentialsDeleteTool(credsStore, auditWriter),
 		mcp.NewCursorSetTool(cursorStore),
 		mcp.NewCursorGetTool(cursorStore),
+		mcp.NewOAuthAccessTokenTool(oauthBridge),
 	} {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)

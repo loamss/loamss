@@ -11,10 +11,6 @@ roles:
 permissions:
   - capability: memory.write
     rationale: Writes calendar events into memory under namespace=calendar.
-  - capability: credentials.read
-    rationale: Reads stored OAuth tokens to call the Calendar API.
-  - capability: credentials.write
-    rationale: Persists OAuth tokens after authentication.
   - capability: external.http
     scope:
       hosts: ["www.googleapis.com"]
@@ -27,22 +23,20 @@ ingestor:
     initial: 30s
   on_trigger: sync
 
+# Runtime ships google as a well-known provider — endpoints come
+# from runtime/internal/oauth/providers.go. No client_id_env, no
+# inline endpoints, no pkce flag.
 oauth:
   provider: google
-  authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
-  token_endpoint: https://oauth2.googleapis.com/token
   scopes:
     - https://www.googleapis.com/auth/calendar.readonly
-  client_id_env: GOOGLE_OAUTH_CLIENT_ID
-  pkce: true
+  extra_params:
+    access_type: offline
+    prompt: consent
 
 tools:
   - name: sync
     description: Sync calendar events since the last cursor.
-    input_schema:
-      type: object
-  - name: authenticate
-    description: Begin the OAuth flow. The user gets a URL to open.
     input_schema:
       type: object
 

@@ -60,6 +60,12 @@ func TestMain(m *testing.M) {
 		runMCPCapsuleHelper()
 		return
 	}
+	// Wire the well-known OAuth provider hook so manifest_test.go
+	// tests using the calendar fixture validate cleanly. Production
+	// wiring lives in cli/start.go.
+	WellKnownOAuthProvider = func(name string) bool {
+		return name == "google" || name == "github"
+	}
 	os.Exit(m.Run())
 }
 
