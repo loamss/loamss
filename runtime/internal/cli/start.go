@@ -238,14 +238,21 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// connectors use for sources/<name>/credentials.json).
 	credsStore := mcp.NewCapsuleCredentialStore(storageAdapter)
 
-	// credentials.* tools — only become callable now that storage is
-	// open. Registered into the same registry the runtime tools above
-	// share; dispatch is identical, just gated on the capsule-only
-	// principal check inside the handler.
+	// Cursor store backing for the cursor.* MCP tools — capsule
+	// ingestors' incremental-sync state. Plaintext, one opaque value
+	// per capsule.
+	cursorStore := mcp.NewCapsuleCursorStore(storageAdapter)
+
+	// credentials.* + cursor.* tools — only become callable now that
+	// storage is open. Registered into the same registry the runtime
+	// tools above share; dispatch is identical, just gated on the
+	// capsule-only principal check inside the handlers.
 	for _, t := range []mcp.Tool{
 		mcp.NewCredentialsSetTool(credsStore, auditWriter),
 		mcp.NewCredentialsGetTool(credsStore, auditWriter),
 		mcp.NewCredentialsDeleteTool(credsStore, auditWriter),
+		mcp.NewCursorSetTool(cursorStore),
+		mcp.NewCursorGetTool(cursorStore),
 	} {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)
