@@ -292,7 +292,8 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		Host:           host,
 		SourceBuildEnv: sourceBuildEnv,
 		CapsuleInstaller: capsule.NewInstaller(capStore, engine, auditWriter,
-			filepath.Join(cfg.Runtime.DataDir, "capsules")),
+			filepath.Join(cfg.Runtime.DataDir, "capsules")).
+			SetIngestorBridge(newDaemonIngestorBridge(srcStore, credsStore, cursorStore)),
 		// ReloadLog: hot-swap the daemon's slog handler when the
 		// wizard writes a config with new log.level / log.format.
 		// Subsystems with their own logger refs (engine, audit,

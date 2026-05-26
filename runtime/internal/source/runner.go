@@ -68,6 +68,15 @@ func Build(ctx context.Context, env BuildEnv, c *Configured) (Source, error) {
 	if c == nil {
 		return nil, errors.New("source: Build called with nil Configured")
 	}
+	if c.OwnerCapsule != "" {
+		// Capsule ingestors are dispatched by the capsule host, not
+		// through the in-tree SPI. Step 5 of the capsule-ingestor
+		// primitives RFC wires the scheduled-trigger path. Until then,
+		// surface a clear "not yet wired" error so the user sees what's
+		// missing rather than a cryptic "adapter not registered".
+		return nil, fmt.Errorf("%w: %q is owned by capsule %q; capsule-ingestor scheduled triggers are wired in step 5 of docs/capsule-ingestor-primitives.md",
+			ErrCapsuleIngestorNotYetExecutable, c.Name, c.OwnerCapsule)
+	}
 	if !isRegistered(c.AdapterID) {
 		return nil, fmt.Errorf("source adapter %q is not registered in this binary", c.AdapterID)
 	}

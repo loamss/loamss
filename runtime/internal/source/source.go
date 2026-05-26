@@ -314,6 +314,13 @@ var (
 	// unregistered adapter id.
 	ErrUnknownSource = errors.New("source: unknown source adapter")
 
+	// ErrCapsuleIngestorNotYetExecutable is returned by Build when the
+	// Configured row's OwnerCapsule is non-empty — capsule ingestors
+	// are dispatched by the capsule host's scheduled-trigger path,
+	// which lands in step 5 of docs/capsule-ingestor-primitives.md.
+	// Until then, listing/visibility works but Sync does not.
+	ErrCapsuleIngestorNotYetExecutable = errors.New("source: capsule ingestor not yet executable (scheduled triggers wired in step 5)")
+
 	// ErrNoCredentials is returned by CredentialStore.Get when the
 	// source has never authenticated.
 	ErrNoCredentials = errors.New("source: no credentials stored")

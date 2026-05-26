@@ -58,6 +58,14 @@ type Configured struct {
 
 	// UpdatedAt is when the row was last modified.
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// OwnerCapsule, when non-empty, names the capsule whose
+	// ingestor manifest brought this row into being. The runtime
+	// dispatches Sync for these rows by invoking the capsule's
+	// on_trigger tool via the capsule host, not via the in-tree
+	// source factory registry. Empty means "in-tree source, look
+	// up the factory in source.Registered()".
+	OwnerCapsule string `json:"owner_capsule,omitempty"`
 }
 
 // Store is the SQLite-backed persistence for configured sources.
@@ -137,6 +145,17 @@ CREATE TABLE IF NOT EXISTS sources (
     updated_at              TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sources_adapter ON sources(adapter_id);
+`,
+	// 2: owner_capsule column for capsule-ingestor rows.
+	//
+	// Non-empty for sources that the capsule installer created on
+	// behalf of an ingestor-role capsule; NULL for in-tree sources
+	// added via `loamss source add`. Dispatch branches on this
+	// column: capsule rows go through the capsule host, in-tree
+	// rows go through the source.Source SPI.
+	`
+ALTER TABLE sources ADD COLUMN owner_capsule TEXT;
+CREATE INDEX IF NOT EXISTS idx_sources_owner_capsule ON sources(owner_capsule);
 `,
 }
 
@@ -224,15 +243,21 @@ func (s *Store) Insert(ctx context.Context, c Configured) (*Configured, error) {
 		return nil, fmt.Errorf("source: encoding config: %w", err)
 	}
 
+	var ownerCapsule any
+	if c.OwnerCapsule != "" {
+		ownerCapsule = c.OwnerCapsule
+	}
+
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO sources (
             id, name, adapter_id, config_json, cursor,
             last_sync_at, last_sync_status, last_sync_summary_json,
-            added_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            added_at, updated_at, owner_capsule
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.Name, c.AdapterID, string(configJSON), c.Cursor,
 		nil, nil, nil,
 		c.AddedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano),
+		ownerCapsule,
 	)
 	if err != nil {
 		if isUniqueConstraint(err) {
@@ -355,7 +380,7 @@ func (s *Store) nextID() string {
 
 const sourceSelectColumns = `SELECT id, name, adapter_id, config_json, cursor,
        last_sync_at, last_sync_status, last_sync_summary_json,
-       added_at, updated_at
+       added_at, updated_at, owner_capsule
        FROM sources`
 
 type rowScanner interface {
@@ -364,18 +389,23 @@ type rowScanner interface {
 
 func scanSource(r rowScanner) (*Configured, error) {
 	var (
-		c           Configured
-		configJSON  string
-		cursor      []byte
-		lastAt      sql.NullString
-		lastStatus  sql.NullString
-		lastSummary sql.NullString
-		addedStr    string
-		updatedStr  string
+		c            Configured
+		configJSON   string
+		cursor       []byte
+		lastAt       sql.NullString
+		lastStatus   sql.NullString
+		lastSummary  sql.NullString
+		addedStr     string
+		updatedStr   string
+		ownerCapsule sql.NullString
 	)
 	if err := r.Scan(&c.ID, &c.Name, &c.AdapterID, &configJSON, &cursor,
-		&lastAt, &lastStatus, &lastSummary, &addedStr, &updatedStr); err != nil {
+		&lastAt, &lastStatus, &lastSummary, &addedStr, &updatedStr,
+		&ownerCapsule); err != nil {
 		return nil, err
+	}
+	if ownerCapsule.Valid {
+		c.OwnerCapsule = ownerCapsule.String
 	}
 	if err := json.Unmarshal([]byte(configJSON), &c.Config); err != nil {
 		return nil, fmt.Errorf("source: decoding config for %s: %w", c.Name, err)

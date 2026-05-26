@@ -39,12 +39,35 @@ type Installer struct {
 	engine     *permission.Engine
 	audit      audit.Writer
 	installDir string // root under which per-capsule directories are created
+
+	// ingestorBridge handles the source-registry side-effects of
+	// installing/uninstalling an ingestor-role capsule. nopBridge by
+	// default; SetIngestorBridge wires the real one from cli/start.go.
+	ingestorBridge IngestorBridge
 }
 
 // NewInstaller constructs an Installer. installDir is typically
 // <data_dir>/capsules; the installer creates it lazily.
 func NewInstaller(store *Store, engine *permission.Engine, w audit.Writer, installDir string) *Installer {
-	return &Installer{store: store, engine: engine, audit: w, installDir: installDir}
+	return &Installer{
+		store:          store,
+		engine:         engine,
+		audit:          w,
+		installDir:     installDir,
+		ingestorBridge: nopIngestorBridge{},
+	}
+}
+
+// SetIngestorBridge wires the source-registry bridge invoked at
+// install/uninstall time for ingestor-role capsules. Passing nil
+// resets to the no-op default. Returns the Installer for chaining.
+func (i *Installer) SetIngestorBridge(b IngestorBridge) *Installer {
+	if b == nil {
+		i.ingestorBridge = nopIngestorBridge{}
+	} else {
+		i.ingestorBridge = b
+	}
+	return i
 }
 
 // InstallResult is the summary returned by Install. Surfaced to the
@@ -140,6 +163,21 @@ func (i *Installer) Install(ctx context.Context, sourcePath, installedBy string)
 		return nil, fmt.Errorf("persisting capsule record: %w", err)
 	}
 
+	// --- 4b. Ingestor bridge (source-registry side-effects) ------
+	// Side-effecting registration the runtime needs the capsule
+	// install to be visible to: source store row insert for
+	// ingestor-role capsules, etc. The bridge no-ops for
+	// non-ingestor capsules.
+	if err := i.ingestorBridge.OnInstall(ctx, &c); err != nil {
+		// Bridge failure ⇒ roll back the capsule install too. We
+		// don't want a capsule record without its source registration
+		// (would be invisible / un-syncable).
+		_ = i.store.Delete(ctx, c.Name)
+		rollbackGrants()
+		rollbackCode()
+		return nil, fmt.Errorf("ingestor bridge install: %w", err)
+	}
+
 	// --- 5. Audit ------------------------------------------------
 	entry := audit.Entry{
 		Type:    "capsule.installed",
@@ -205,6 +243,12 @@ func (i *Installer) Uninstall(ctx context.Context, name, uninstalledBy, reason s
 		return err
 	}
 
+	// 2b. Ingestor bridge — clean up the sources-table row + the
+	// capsule's credential and cursor blobs. Best-effort; an error
+	// here doesn't undo the uninstall (the capsule is already gone).
+	// Errors land in audit via the uninstall entry below.
+	bridgeErr := i.ingestorBridge.OnUninstall(ctx, name)
+
 	// 3. Remove code dir (best-effort; missing dir is fine).
 	_ = os.RemoveAll(c.InstallPath)
 
@@ -221,6 +265,9 @@ func (i *Installer) Uninstall(ctx context.Context, name, uninstalledBy, reason s
 	}
 	if reason != "" {
 		entry.Data["reason"] = reason
+	}
+	if bridgeErr != nil {
+		entry.Data["ingestor_bridge_error"] = bridgeErr.Error()
 	}
 	_, _ = i.audit.Append(ctx, entry)
 
