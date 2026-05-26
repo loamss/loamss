@@ -314,11 +314,15 @@ jobs:
           # own validation runs.
           npm version --no-git-tag-version "$VERSION"
 
-      - name: Install + typecheck + test + build
+      - name: Install + test + build
         if: steps.precheck.outputs.skip != 'true'
         run: |
+          # `bun run build` runs `tsc --project tsconfig.build.json`
+          # which type-checks src/ as part of compilation. We don't
+          # ALSO run the workspace-wide `bun run typecheck` here
+          # because that includes examples/ — a broken example
+          # shouldn't block the SDK publish.
           bun install --frozen-lockfile
-          bun run typecheck
           bun run test
           bun run build
 

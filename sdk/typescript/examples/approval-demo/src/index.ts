@@ -82,7 +82,7 @@ const peek = defineTool<PeekInput, PeekOutput>({
 					hint: "threads.list returned no content block; nothing recent yet.",
 				};
 			}
-			const payload = JSON.parse(text.text) as { threads?: ThreadRow[] };
+			const payload = JSON.parse(text.text ?? "{}") as { threads?: ThreadRow[] };
 			return {
 				status: "approved",
 				threads: payload.threads ?? [],
@@ -115,6 +115,7 @@ await createCapsule({
 		spec_version: "0.1",
 		name: "approval-demo",
 		version: "0.1.0",
+		author: { name: "Loamss contributors" },
 	},
 	tools: [peek],
 }).start();
