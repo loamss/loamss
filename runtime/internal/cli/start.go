@@ -195,9 +195,11 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = capStore.Close() }()
 
 	host := capsule.NewHost(capStore, engine, auditWriter, tools, logger)
-	if _, err := host.Start(ctx); err != nil {
-		return fmt.Errorf("starting capsule host: %w", err)
-	}
+	// host.Start is deferred until after srcStore is open + the
+	// scheduler is wired as the lifecycle hook — otherwise the
+	// first wave of OnCapsuleStarted callbacks would fire against a
+	// nil scheduler and ingestor capsules would never get scheduled
+	// at daemon boot.
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -257,6 +259,22 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		if err := tools.Register(t); err != nil {
 			return fmt.Errorf("registering tool %q: %w", t.Name, err)
 		}
+	}
+
+	// Ingestor scheduler — drives the scheduled-trigger path for
+	// capsule ingestors. Wired as the capsule.Host's lifecycle hook
+	// BEFORE host.Start so the first wave of OnCapsuleStarted
+	// callbacks (one per already-installed capsule) schedules
+	// their tickers as the daemon comes up.
+	scheduler := newIngestorScheduler(host, srcStore, auditWriter, logger)
+	host.SetLifecycleHook(scheduler)
+	defer scheduler.stop()
+
+	// Now safe to bring capsule subprocesses up — the scheduler
+	// will receive its OnCapsuleStarted callbacks and stand up the
+	// per-ingestor tickers.
+	if _, err := host.Start(ctx); err != nil {
+		return fmt.Errorf("starting capsule host: %w", err)
 	}
 
 	// Build env handed to /console/sources for on-demand source

@@ -49,6 +49,12 @@ type Host struct {
 	// value is the capsule name that owns it (kept for diagnostics).
 	capsuleToolsMu sync.RWMutex
 	capsuleTools   map[string]string
+
+	// lifecycle fires on every successful StartOne / StopOne so the
+	// daemon's scheduler can keep ingestor tickers in lockstep with
+	// the capsules' running state. nopLifecycleHook by default; set
+	// via SetLifecycleHook in cli/start.go.
+	lifecycle LifecycleHook
 }
 
 // NewHost constructs a Host. tools is the mcp.Registry where
@@ -66,7 +72,20 @@ func NewHost(store *Store, engine *permission.Engine, w audit.Writer, tools *mcp
 		logger:       logger,
 		clients:      make(map[string]*Client),
 		capsuleTools: make(map[string]string),
+		lifecycle:    nopLifecycleHook{},
 	}
+}
+
+// SetLifecycleHook wires the LifecycleHook the Host fires whenever
+// a capsule subprocess starts or stops. Passing nil resets to the
+// no-op default. Returns the Host for chaining.
+func (h *Host) SetLifecycleHook(hook LifecycleHook) *Host {
+	if hook == nil {
+		h.lifecycle = nopLifecycleHook{}
+	} else {
+		h.lifecycle = hook
+	}
+	return h
 }
 
 // Start spawns one Client per persisted capsule. Each Client runs
@@ -138,6 +157,10 @@ func (h *Host) StartOne(ctx context.Context, c Installed) error {
 		h.capsuleTools[tool.Name] = c.Name
 		h.capsuleToolsMu.Unlock()
 	}
+	// Fire the lifecycle hook after tools are mounted so the
+	// receiver (typically the scheduler) sees a fully-installed
+	// capsule. Errors from the hook do not block startup.
+	h.lifecycle.OnCapsuleStarted(ctx, c)
 	return nil
 }
 
@@ -395,6 +418,7 @@ func (h *Host) Stop(ctx context.Context) error {
 
 	var firstErr error
 	for name, client := range clients {
+		h.lifecycle.OnCapsuleStopped(ctx, name)
 		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		if err := client.Stop(stopCtx); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("stopping %s: %w", name, err)
@@ -424,6 +448,9 @@ func (h *Host) StopOne(ctx context.Context, name string) error {
 	if !ok {
 		return nil
 	}
+	// Fire the lifecycle hook before the subprocess goes down so the
+	// scheduler can stop tickers and drain in-flight invocations.
+	h.lifecycle.OnCapsuleStopped(ctx, name)
 	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := client.Stop(stopCtx); err != nil {
