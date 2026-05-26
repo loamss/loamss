@@ -4,7 +4,9 @@ Python 3.11+ SDK for building Loamss capsules. Same wire shape as the [TypeScrip
 
 ## Status
 
-Phase 2. Mirrors the TypeScript SDK's surface (transport, jsonrpc, manifest, tool, runtime, capsule, content). Zero runtime dependencies — everything's stdlib (`asyncio`, `json`, `dataclasses`).
+Phase 2 — surface complete, 19 tests pass. Mirrors the TypeScript SDK exactly: transport, jsonrpc, manifest, tool, runtime, capsule, content. Zero runtime dependencies — everything's stdlib (`asyncio`, `json`, `dataclasses`).
+
+> **Example coverage**: today the Python SDK ships one example (`hello-world`). The TypeScript SDK ships six (including the two reference ingestors and the OAuth-using calendar capsule). The wire protocol is identical — a capsule written in TS can be ported line-for-line — but Python-native ports of the larger examples (`rss-ingestor`, `calendar-ingestor`, `daily-brief`) are not yet here. PRs welcome.
 
 Not yet on PyPI; install from this directory for now.
 

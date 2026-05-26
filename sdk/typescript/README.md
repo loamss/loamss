@@ -5,7 +5,7 @@ TypeScript SDK for building on **Loamss**. Two surfaces, one package:
 - **Capsules** — sandboxed extensions that run *inside* a user's Loamss runtime. Use `createCapsule` for these. Speaks MCP-over-stdio as a subprocess the runtime spawns.
 - **Path-B apps** — external apps that *pair with* a user's Loamss and call tools through the MCP HTTP surface. Use `pair` + `createClient` for these. Speaks MCP-over-HTTP + SSE with bearer-token auth.
 
-> **Status: v0.1, evolving.** The wire protocol tracks Loamss runtime `v0.1` (MCP protocol version `2025-03-26`). Expect breaking changes before v1.0.
+> **Status: v0.1, evolving.** 43 tests pass; the wire protocol tracks Loamss runtime `v0.1` (MCP protocol version `2025-03-26`). Expect breaking changes before v1.0.
 
 ## Install
 
@@ -48,7 +48,18 @@ Pair with a `capsule.yaml` (see `examples/hello-world/capsule.yaml`) and install
 loamss capsule install /path/to/capsule
 ```
 
-The full hello-world is in [`examples/hello-world/`](./examples/hello-world/).
+The full hello-world is in [`examples/hello-world/`](./examples/hello-world/), along with five more reference capsules:
+
+| Example | Role | Demonstrates |
+|---|---|---|
+| [`hello-world`](./examples/hello-world/) | minimal | The smallest possible capsule — one tool, no permissions |
+| [`daily-brief`](./examples/daily-brief/) | organizer | Reading memory across threads/entities and calling `model.call` to summarize |
+| [`approval-demo`](./examples/approval-demo/) | actuator | The `requires_user_approval` consequential-action gate |
+| [`inbox-app`](./examples/inbox-app/) | exposer | Exposing structured resources back to MCP clients |
+| [`rss-ingestor`](./examples/rss-ingestor/) | ingestor (no-auth) | Scheduled trigger + `cursor.{get,set}` + `memory.upsert` for public feeds |
+| [`calendar-ingestor`](./examples/calendar-ingestor/) | ingestor (OAuth) | The full Google OAuth path: `oauth.access_token`, runtime-driven browser flow, transparent refresh |
+
+The two ingestors together (`rss-ingestor` + `calendar-ingestor`) cover every capsule-ingestor primitive the runtime exposes — see [`../../docs/capsule-ingestor-primitives.md`](../../docs/capsule-ingestor-primitives.md) for the design.
 
 ## Hello, world (Path-B app)
 

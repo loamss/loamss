@@ -1,10 +1,10 @@
 # @loamss/console
 
-The user-facing console for the Loamss runtime. v0.1 prototype.
+The user-facing console for the Loamss runtime. Embedded into the `loamss` binary via Go `embed.FS` and served at the runtime's listen address — there's no separate server in production.
 
-This is the seamless-configuration UI that sits above the `loamss` CLI. The first-run wizard is the cardinal test — a new user should land on a working runtime in under five minutes without reading docs or opening a terminal.
+## Status
 
-> **Status: prototype.** First-run wizard is functional; the seven tabs (Dashboard, Sources, Apps, Capsules, Memory, Activity, Settings) live in `console-design.md` at the repo root and ship incrementally.
+**Phase 1+, interactive.** First-run wizard and all five dashboard panes (Sources, Capsules, Apps, Approvals, Activity) talk to the live runtime over HTTP. The Settings tab is the last cluster waiting on UI work; the OAuth surface (Phase 1 of the OAuth UI build plan) is being added next.
 
 ## Run it
 
@@ -15,68 +15,85 @@ bun dev
 # open http://localhost:3000
 ```
 
-`bun build` produces a static export to `out/` that gets embedded into the Go runtime binary via `embed.FS` for the production deploy.
+In dev mode the console runs against a separate origin from the runtime. Set `NEXT_PUBLIC_LOAMSS_BASE=http://127.0.0.1:7777` if your runtime isn't on the default port.
+
+For the production embed:
+
+```bash
+bun build         # produces a static export to out/
+# The runtime's Makefile (../runtime/Makefile) copies out/ into
+# internal/console/dist/ and serves it from the Go binary via
+# embed.FS. The runtime build path is the one that ships.
+```
 
 ## What's built
 
-The first-run wizard:
+### First-run wizard (`/`)
 
-1. **Welcome** — editorial invitation, "begin setup" or "import existing config"
-2. **01 Storage** — encrypted local folder (default), cloud (coming soon), or custom path with optional encryption toggle
-3. **02 Memory** — SQLite (default), pgvector / Chroma (coming soon)
-4. **03 Models** — skip, Anthropic Claude (with API key in OS keychain), or Ollama (auto-detected at `localhost:11434`)
-5. **04 Connect** — optional first source. Skip (default) or Gmail with an "App isn't verified" preempt
-6. **Done** — config summary + directory of next actions, never a victory lap
+1. **Welcome** — editorial invitation
+2. **01 Storage** — encrypted local folder (default), S3 / GCS, or custom path
+3. **02 Memory** — `sqlite-vec` (default), `pgvector`, `chroma`, `qdrant`
+4. **03 Models** — skip, Anthropic Claude, OpenAI, or Ollama (auto-detected at `localhost:11434`)
+5. **04 Connect** — optional first source. Skip or files/Gmail
+6. **Done** — config summary, directory of next actions
 
-What's mocked:
+Submission writes a real config file via `POST /console/init`; the daemon re-reads it without a restart (hot-reload covers everything except data-dir / listen-address / primary-adapter changes).
 
-- The "Finish setup" submission runs canned progress over ~1.6s instead of calling the runtime. Real version goes through `@loamss/sdk`.
-- The Ollama detection waits 700ms and reports "detected" — flip with `?ollama=missing` to see the alternate "not detected" state.
-- The Gmail-connect flow doesn't actually start; the wizard saves the user's intent for the dashboard to pick up.
+### Dashboard (`/`, post-wizard)
 
-## What's next
+| Pane | What it does |
+|---|---|
+| **Sources** | List + add + sync + remove. Capsule ingestors and in-tree sources appear together |
+| **Capsules** | Install (from local path or registry — registry MVP in progress), start / stop, view permission slip |
+| **Apps** | Pair new MCP client via one-time code, revoke paired clients |
+| **Approvals** | Pending capability checks the user has to decide on. The most important surface — one-click approve/deny |
+| **Activity** | Audit log made human; filter by actor, type, outcome |
 
-Per the design doc (`/console-design.md` at the repo root):
+### What's still mocked
 
-- The seven tabs the wizard hands off to (Dashboard, Sources, Apps, Capsules, Memory, Activity, Settings)
-- Real runtime wiring via `@loamss/sdk` (the wizard's mocked async calls become real bearer-token-authenticated HTTP)
-- Dashboard with live source + app cards, recent activity, pending approvals
-- The Gmail-connect 4-step wizard (referenced from Sources → Add)
+- **Memory tab** — entities + threads detail views. The SDK side is real (`runtime.tools.call("entities.list" / "threads.list" / ...)`) but no console screen exists yet.
+- **Settings tab** — config edits go through `POST /console/init` today, but there's no in-console editor for them yet.
+- **OAuth surface** — the runtime's `/console/oauth/*` endpoints exist; the console UI on top of them is the active build (see the OAuth-UI plan in the repo-root chat).
 
 ## Tech
 
 - **Framework**: Next.js 15 (App Router) with `output: "export"` for static deploy
 - **Language**: TypeScript strict
-- **Style**: Tailwind v3 with a custom theme (see `tailwind.config.ts`)
-- **State**: Zustand for wizard state (`src/lib/wizard-state.ts`)
+- **Style**: Tailwind v3 with a custom theme (`tailwind.config.ts`)
+- **State**: Zustand for cross-component stores (`src/lib/wizard-state.ts`, `src/lib/dashboard-state.ts`)
 - **Fonts**: Fraunces (variable serif, display) + IBM Plex Sans (body) + IBM Plex Mono (IDs/paths)
 - **Package manager**: Bun
-
-No third-party UI kit — every primitive is built locally (`src/components/primitives/`). This is on purpose: the visual identity matters more than feature coverage at this stage.
+- **No third-party UI kit** — every primitive lives in `src/components/primitives/`. This is on purpose.
 
 ## Project layout
 
 ```
 src/
 ├── app/
-│   ├── layout.tsx        # font loading + html shell
-│   ├── page.tsx          # wizard root
-│   └── globals.css       # paper texture, focus rings, scrollbar
+│   ├── layout.tsx              font loading + html shell
+│   ├── page.tsx                wizard root (pre-config) / dashboard root (post-config)
+│   ├── globals.css             paper texture, focus rings, scrollbar
+│   └── (dashboard)/            post-wizard panes
+│       ├── sources/
+│       ├── capsules/
+│       ├── apps/
+│       ├── approvals/
+│       └── activity/
 ├── components/
-│   ├── primitives/       # Button, Choice, Field, Note, Wordmark
-│   └── wizard/
-│       ├── WizardShell.tsx
-│       ├── Stepper.tsx
-│       └── steps/        # Welcome, Storage, Memory, Models, Connect, Done
+│   ├── primitives/             Button, Choice, Field, Note, Wordmark
+│   ├── wizard/                 WizardShell, Stepper, six step components
+│   └── dashboard/              SourceRow, CapsuleCard, ApprovalChip, ActivityEntry, …
 └── lib/
-    └── wizard-state.ts   # Zustand store + step ordering
+    ├── wizard-state.ts         Zustand wizard store
+    ├── dashboard-state.ts      Zustand dashboard store
+    └── runtime-client.ts       Thin wrapper over fetch + /console/* + the MCP client
 ```
 
 ## Visual identity
 
-Direction: **editorial-technical minimalism** — infrastructure software a thoughtful adult would trust with their data. The aesthetic borrows from technical manuals and serious editorial design rather than SaaS dashboards.
+Direction: **editorial-technical minimalism** — infrastructure software a thoughtful adult would trust with their data. Not a SaaS dashboard.
 
-- Paper background `#F6F2EA` with a barely-visible grain
+- Paper background `#F6F2EA` with barely-visible grain
 - Deep brown-black ink `#1B1814` (never `#000`)
 - Brand: deep forest green `#1F3D2C` — "vault" / "thriving", never startup-tech-green
 - Semantic: sage `#3D7B5C` / dusty amber `#A87838` / brick red `#94392C`
@@ -84,22 +101,28 @@ Direction: **editorial-technical minimalism** — infrastructure software a thou
 - 1px hairline dividers — whisper, don't shout
 - 250ms ease-out transitions — patient, never bouncy
 
-The full visual rationale is in `/console-design.md` at the repo root.
+If a new component feels visually loud, it's probably wrong. Bias toward restraint. The full design rationale lives in [`../console-design.md`](../console-design.md).
 
-## Development shortcuts
+## Dev shortcuts
 
-In dev mode only:
+In `process.env.NODE_ENV !== "production"`:
 
-- `?step=storage` (or any step id) — jump to a specific wizard step
+- `?step=<id>` — jump to any wizard step (welcome / storage / memory / models / connect / done)
 - `?anthropic=1` — pre-select Anthropic with a demo key
 - `?ollama=1` — pre-select Ollama
-- `?ollama=missing` — show the "Ollama not detected" warn state on the models step
+- `?ollama=missing` — flip Ollama detection to "not found" to inspect the warn state
+- `?dashboard=1` — bypass wizard, jump straight to dashboard (handy when iterating on a single pane)
 
-These are stripped in production builds.
+Inert in production builds.
+
+## Embed pipeline
+
+The runtime's `Makefile` runs `bun install --frozen-lockfile && bun run build` against this directory and copies the resulting `out/` into `runtime/internal/console/dist/`, which is then included via Go `embed.FS`. The single binary `loamss` ships with the console baked in — there's no separate console server in production. CI builds both sides on every push.
 
 ## Related
 
-- `/console-design.md` — the full design exploration (IA, flows, screens, decisions)
-- `/sdk/typescript/` — `@loamss/sdk`, the MCP client library the console will use
-- `/cli.md` — every console action maps to an existing CLI command
-- `/permission-model.md` — the model behind permission slips
+- [`../console-design.md`](../console-design.md) — design exploration (IA, flows, screens, decisions)
+- [`../sdk/typescript/`](../sdk/typescript/) — `@loamss/sdk`, the MCP client library the dashboard uses
+- [`../cli.md`](../cli.md) — every console action maps to a CLI command
+- [`../permission-model.md`](../permission-model.md) — the model behind permission slips
+- [`CLAUDE.md`](CLAUDE.md) — coding conventions specific to this subtree
