@@ -1,0 +1,72 @@
+# RSS Ingestor — the canonical "ingestor role" reference capsule.
+#
+# What this exercises:
+#
+#   - manifest roles: [ingestor] + the ingestor: block
+#   - scheduled trigger (the runtime invokes `sync` every N minutes)
+#   - cursor.{get,set} for incremental sync (last-seen item per feed)
+#   - memory.upsert (writes items into namespace "rss-<feed>")
+#   - external.http with a per-feed host allowlist
+#
+# Deliberately no OAuth — RSS is public. See the calendar-ingestor
+# example for the OAuth-using variant.
+#
+# After install, the runtime's scheduler ticks every 5 minutes; on
+# each tick the capsule:
+#   1. Walks every feed in its config
+#   2. Fetches the RSS XML
+#   3. Skips items it's already seen (cursor is the latest pubDate)
+#   4. Upserts each new item into memory
+#   5. Updates the cursor
+
+spec_version: "0.1"
+
+name: rss-ingestor
+version: 0.1.0
+
+author:
+  name: Loamss contributors
+  url: https://github.com/loamss/loamss
+
+roles:
+  - ingestor
+
+permissions:
+  - capability: memory.write
+    scope:
+      entities: ["rss-item"]
+    rationale: |
+      Writes one memory entry per RSS item under namespace
+      "rss-<feed>". The user grants this once at install; the
+      capsule never writes outside that namespace.
+
+  - capability: external.http
+    scope:
+      hosts:
+        - "*.atom.xml"
+        - "*"
+      methods: ["GET"]
+      max_bytes: 5242880
+    rationale: |
+      Fetches the RSS XML over HTTPS. Per-install the user can
+      narrow `hosts` to the specific feed domains they configured.
+
+ingestor:
+  source_id: source:rss
+  schedule:
+    interval: 5m
+    initial: 10s
+  on_trigger: sync
+
+tools:
+  - name: sync
+    description: |
+      Fetch every configured feed, upsert new items into memory,
+      and advance the cursor. Returns the standard SyncResult shape
+      so the runtime's scheduler can persist counters.
+    input_schema:
+      type: object
+
+description: "Reference ingestor capsule — fetches RSS feeds into memory."
+tags: [ingestor, rss, reference]
+license: Apache-2.0

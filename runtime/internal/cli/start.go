@@ -161,6 +161,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		mcp.NewAuditReadTool(auditWriter),
 		mcp.NewMemoryShowTool(memAdapter),
 		mcp.NewMemoryQueryTool(memAdapter, embeddingAdapter),
+		mcp.NewMemoryUpsertTool(memLayer),
 		mcp.NewEntitiesListTool(memLayer),
 		mcp.NewEntitiesShowTool(memLayer),
 		mcp.NewEntitiesEntriesTool(memLayer),
