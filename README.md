@@ -108,7 +108,7 @@ A **capsule** is a packaged unit (TypeScript or Python today; WASM planned) that
 
 The catalogue grows in the open marketplace, not in this repo. The two in-tree connectors (`source:files`, `source:gmail`) are SPI reference implementations covering the no-auth and OAuth extremes; everything else (Calendar, Drive, Slack, GitHub, Notion, Linear, …) ships as a capsule under the `ingestor` role.
 
-The full primitive set for capsule ingestors — credential storage, cursor persistence, scheduled triggers, runtime-driven OAuth — landed in the most recent release. The `rss-ingestor` example in [`sdk/typescript/examples/`](sdk/typescript/examples/) is the canonical reference that exercises every primitive.
+The full primitive set for capsule ingestors — credential storage, cursor persistence, scheduled triggers, runtime-driven OAuth — landed in the most recent release. Two reference capsules in [`sdk/typescript/examples/`](sdk/typescript/examples/) cover the design spectrum: [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) (no-auth) and [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) (Google OAuth, with the runtime driving the browser flow). Together they demonstrate every primitive end-to-end.
 
 ---
 
@@ -147,7 +147,7 @@ Path A grows the ecosystem; Path B follows once enough users run Loamss. Today, 
 
 - ✅ **TypeScript SDK** (`@loamss/sdk`) — full MCP-over-stdio capsule surface, runtime callback client
 - ✅ **Python SDK** (`loamss_sdk`) — mirrors the TS shape
-- ✅ **5 reference capsules**: `hello-world`, `daily-brief`, `approval-demo`, `inbox-app`, `rss-ingestor`
+- ✅ **6 reference capsules**: `hello-world`, `daily-brief`, `approval-demo`, `inbox-app`, `rss-ingestor` (no-auth ingestor), `calendar-ingestor` (Google OAuth ingestor)
 - ✅ **Capsule ingestor primitives** end-to-end: credentials store, cursor store, scheduled triggers, source-registry bridge, OAuth orchestrator with well-known provider registry (google, github), `oauth.access_token` MCP tool, `/console/oauth/*` HTTP surface
 - ⏳ **Capsule marketplace** (registry MVP + certification pipeline)
 
