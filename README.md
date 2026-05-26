@@ -145,8 +145,8 @@ Path A grows the ecosystem; Path B follows once enough users run Loamss. Today, 
 
 ### Capsule ecosystem
 
-- ✅ **TypeScript SDK** ([`@loamss/sdk`](sdk/typescript/)) — full MCP-over-stdio capsule surface, runtime callback client (43 tests)
-- ✅ **Python SDK** ([`loamss_sdk`](sdk/python/)) — mirrors the TS shape (19 tests)
+- ✅ **TypeScript SDK** ([`@loamss/sdk`](sdk/typescript/)) — `bun add @loamss/sdk` / `npm install @loamss/sdk`. Full MCP-over-stdio capsule surface + Path-B client library, 43 tests
+- ✅ **Python SDK** ([`loamss_sdk`](sdk/python/)) — mirrors the TS shape, 19 tests
 - ✅ **6 reference capsules** under [`sdk/typescript/examples/`](sdk/typescript/examples/):
 
   | Capsule | Role | Demonstrates |
@@ -173,7 +173,33 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased plan.
 
 ## Try it locally
 
-You need Go 1.25+ and [Bun](https://bun.sh) (Bun builds the embedded dashboard; the runtime itself is pure Go).
+### Homebrew (macOS + Linux)
+
+```bash
+brew tap loamss/loamss
+brew install loamss
+loamss start --open
+```
+
+The same formula works on Apple Silicon, Intel Macs, and Linux (arm64 + amd64 — Homebrew has been Linux-native since 2019). [`homebrew/README.md`](homebrew/README.md) has the verification + tap setup details.
+
+### Direct binary download
+
+If you'd rather not use Homebrew:
+
+```bash
+# Pick the right tarball for your OS + arch from the latest release.
+# Example: Linux arm64 (Raspberry Pi 4/5, AWS Graviton, …)
+curl -L -O https://github.com/loamss/loamss/releases/latest/download/loamss-v0.1.0-linux-arm64.tar.gz
+tar xzf loamss-v0.1.0-linux-arm64.tar.gz
+./loamss-v0.1.0-linux-arm64/loamss start --open
+```
+
+The runtime has no runtime dependencies — embedded dashboard, static-linked SQLite, etc. — so it just runs.
+
+### Build from source
+
+For active development or to run the latest unreleased commit, you need Go 1.25+ and [Bun](https://bun.sh) (Bun builds the embedded dashboard; the runtime itself is pure Go):
 
 ```bash
 git clone https://github.com/loamss/loamss
@@ -181,6 +207,8 @@ cd loamss/runtime
 make build              # bun build (console) + go build (runtime)
 ./bin/loamss start --open
 ```
+
+---
 
 `--open` launches your browser at the daemon's URL. On a fresh install you land on the three-minute first-run wizard; subsequent runs land on the dashboard.
 

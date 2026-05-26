@@ -12,9 +12,14 @@ TypeScript SDK for building on **Loamss**. Two surfaces, one package:
 ```bash
 bun add @loamss/sdk
 # or: npm install @loamss/sdk
+# or: pnpm add @loamss/sdk
 ```
 
-> Note: the `@loamss` org on npm is reserved but not yet published-to. While the SDK is in-repo, capsules can pull it from the workspace path; once Phase 2 ships, `bun add @loamss/sdk` will resolve to npm.
+Published as an ESM-only package with bundled `.d.ts`. Node 20+, Bun ≥ 1.1, or Deno (via npm specifier).
+
+The package is built from this directory's `src/` by the release pipeline on every tagged release; what ships to npm is the compiled `dist/` plus the README + LICENSE. Source maps and declaration maps are included so stack traces resolve back to the SDK's TS source.
+
+> **In-repo development**: capsules under `examples/` import from `../../../src/index.js` (relative TS) instead of the published npm package so they always exercise the latest commit. The TS files reachable via that path are the same source that gets compiled for npm — when you change them, both consumers see the change.
 
 ## Hello, world
 

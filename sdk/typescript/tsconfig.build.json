@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Build-time tsconfig for npm publish.",
+    "",
+    "Inherits the dev config's strict-mode flags, then flips noEmit off",
+    "and aims tsc at ./src only — the test/ and examples/ trees stay in",
+    "the dev config so editors still typecheck them, but they don't",
+    "ship in the published package.",
+    "",
+    "The .bun field on the dev config's `types: [\"bun\"]` would pull",
+    "Bun-specific globals into emitted .d.ts files (assert, Bun.*), so",
+    "we drop it here — published .d.ts targets generic Node 20+ / Bun /",
+    "Deno consumers. Tests still use Bun's runner via the dev config."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "test/**/*",
+    "examples/**/*"
+  ]
+}

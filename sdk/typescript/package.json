@@ -1,38 +1,57 @@
 {
   "name": "@loamss/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for building Loamss capsules — sandboxed extensions that run inside a user's Loamss runtime.",
+  "description": "TypeScript SDK for building Loamss capsules — sandboxed extensions that run inside a user's Loamss runtime — and for Path-B apps that pair with a user's Loamss over MCP-over-HTTP.",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": [
-    "src",
-    "README.md"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "clean": "rm -rf dist",
     "test": "bun test",
     "typecheck": "bun tsc --noEmit",
-    "lint": "bun tsc --noEmit"
+    "lint": "bun tsc --noEmit",
+    "prepublishOnly": "bun run clean && bun run test && bun run build"
   },
   "keywords": [
     "loamss",
     "mcp",
     "model-context-protocol",
     "capsule",
-    "sdk"
+    "sdk",
+    "personal-data",
+    "permission-framework"
   ],
   "author": "Loamss contributors",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/loamss/loamss",
+  "homepage": "https://github.com/loamss/loamss/tree/main/sdk/typescript",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/loamss/loamss.git",
     "directory": "sdk/typescript"
   },
+  "bugs": {
+    "url": "https://github.com/loamss/loamss/issues"
+  },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/node": "^25.9.1",
     "typescript": "^5.6.3"
   },
   "engines": {
