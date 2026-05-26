@@ -145,9 +145,18 @@ Path A grows the ecosystem; Path B follows once enough users run Loamss. Today, 
 
 ### Capsule ecosystem
 
-- ✅ **TypeScript SDK** (`@loamss/sdk`) — full MCP-over-stdio capsule surface, runtime callback client
-- ✅ **Python SDK** (`loamss_sdk`) — mirrors the TS shape
-- ✅ **6 reference capsules**: `hello-world`, `daily-brief`, `approval-demo`, `inbox-app`, `rss-ingestor` (no-auth ingestor), `calendar-ingestor` (Google OAuth ingestor)
+- ✅ **TypeScript SDK** ([`@loamss/sdk`](sdk/typescript/)) — full MCP-over-stdio capsule surface, runtime callback client (43 tests)
+- ✅ **Python SDK** ([`loamss_sdk`](sdk/python/)) — mirrors the TS shape (19 tests)
+- ✅ **6 reference capsules** under [`sdk/typescript/examples/`](sdk/typescript/examples/):
+
+  | Capsule | Role | Demonstrates |
+  |---|---|---|
+  | [`hello-world`](sdk/typescript/examples/hello-world/) | minimal | The smallest possible capsule — one tool, no permissions |
+  | [`daily-brief`](sdk/typescript/examples/daily-brief/) | organizer | Reading memory across threads/entities and calling `model.call` to summarize |
+  | [`approval-demo`](sdk/typescript/examples/approval-demo/) | actuator | The `requires_user_approval` consequential-action gate |
+  | [`inbox-app`](sdk/typescript/examples/inbox-app/) | exposer | Exposing structured resources back to MCP clients |
+  | [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) | ingestor (no-auth) | Scheduled trigger + `cursor.{get,set}` + `memory.upsert` for public feeds |
+  | [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) | ingestor (OAuth) | The full Google OAuth path: `oauth.access_token`, runtime-driven browser flow, transparent refresh |
 - ✅ **Capsule ingestor primitives** end-to-end: credentials store, cursor store, scheduled triggers, source-registry bridge, OAuth orchestrator with well-known provider registry (google, github), `oauth.access_token` MCP tool, `/console/oauth/*` HTTP surface
 - ⏳ **Capsule marketplace** (registry MVP + certification pipeline)
 
