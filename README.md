@@ -175,6 +175,8 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased plan.
 
 ## Try it locally
 
+For the full walkthrough (install → wizard → first source → first query → external MCP client), see [`docs/getting-started.md`](docs/getting-started.md). The short version:
+
 ### Homebrew (macOS + Linux)
 
 ```bash
@@ -227,6 +229,8 @@ Three things to try once you're in:
 ## Reading order
 
 **Curious**: this README → [`scenarios.md`](scenarios.md) → [`ROADMAP.md`](ROADMAP.md).
+
+**Trying it**: [`docs/getting-started.md`](docs/getting-started.md) — install, first run, first source, first query.
 
 **Building a capsule**: [`docs/build-your-first-capsule.md`](docs/build-your-first-capsule.md) → [`capsule-spec.md`](capsule-spec.md) → the TypeScript SDK at [`sdk/typescript/`](sdk/typescript/). For ingestor capsules specifically: [`docs/capsule-ingestor-primitives.md`](docs/capsule-ingestor-primitives.md).
 
