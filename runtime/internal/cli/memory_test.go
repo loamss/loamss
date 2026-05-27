@@ -65,7 +65,7 @@ func seedLayer(t *testing.T, dataDir string) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	layer := memlayer.New(adapter, store, nil)
+	layer := memlayer.New(adapter, store, nil, nil)
 
 	// Three messages in one thread between Sarah and Bob.
 	entries := []memlayer.Entry{

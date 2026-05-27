@@ -62,7 +62,7 @@ func newLayer(t *testing.T) (Layer, *stubAdapter, *Store) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	adapter := newStubAdapter()
-	return New(adapter, store, silentLogger), adapter, store
+	return New(adapter, store, nil, silentLogger), adapter, store
 }
 
 // --- Upsert / Delete ----------------------------------------------------
@@ -108,6 +108,108 @@ func TestLayer_UpsertSkipsAdapterWhenNoVector(t *testing.T) {
 	ents, _ := store.ListEntities(context.Background(), EntityFilter{Namespace: "gmail-personal"})
 	if len(ents) == 0 {
 		t.Error("expected entity derivation to run even without embeddings")
+	}
+}
+
+// stubEmbedder returns a fixed-length vector regardless of input.
+// Tracks the texts it was asked to embed so tests can assert call
+// patterns.
+type stubEmbedder struct {
+	mu     sync.Mutex
+	texts  []string
+	vector []float32
+	err    error
+}
+
+func (e *stubEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.texts = append(e.texts, text)
+	if e.err != nil {
+		return nil, e.err
+	}
+	return e.vector, nil
+}
+
+func TestLayer_UpsertAutoEmbedsWhenEmbedderConfigured(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(context.Background(), filepath.Join(dir, "runtime.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	adapter := newStubAdapter()
+	emb := &stubEmbedder{vector: []float32{0.1, 0.2, 0.3}}
+	l := New(adapter, store, emb, silentLogger)
+
+	err = l.Upsert(context.Background(), Entry{
+		Namespace: "files-notes",
+		ID:        "n1",
+		Content:   "Sarah is planning a Q3 contract talk.",
+		Metadata: map[string]any{
+			"path": "/notes/sarah.md",
+		},
+		// No Embeddings — should trigger auto-embed.
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if !adapter.has("files-notes:n1") {
+		t.Fatal("adapter should have received the entry (auto-embedded)")
+	}
+	if len(emb.texts) != 1 || emb.texts[0] != "Sarah is planning a Q3 contract talk." {
+		t.Errorf("embedder.texts = %v, want one entry with the content", emb.texts)
+	}
+}
+
+func TestLayer_UpsertPrefersCallerVectorOverEmbedder(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(context.Background(), filepath.Join(dir, "runtime.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	adapter := newStubAdapter()
+	emb := &stubEmbedder{vector: []float32{9, 9, 9}}
+	l := New(adapter, store, emb, silentLogger)
+
+	err = l.Upsert(context.Background(), Entry{
+		Namespace:  "files-notes",
+		ID:         "n1",
+		Content:    "ignored when caller supplies a vector",
+		Embeddings: []float32{0.5, 0.5, 0.5},
+		Metadata:   map[string]any{"path": "/x"},
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if len(emb.texts) != 0 {
+		t.Errorf("embedder should not have been called; got texts=%v", emb.texts)
+	}
+}
+
+func TestLayer_UpsertSurvivesEmbedderFailure(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(context.Background(), filepath.Join(dir, "runtime.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	adapter := newStubAdapter()
+	emb := &stubEmbedder{err: errors.New("model unreachable")}
+	l := New(adapter, store, emb, silentLogger)
+
+	err = l.Upsert(context.Background(), Entry{
+		Namespace: "files-notes",
+		ID:        "n1",
+		Content:   "anything",
+		Metadata:  map[string]any{"path": "/x"},
+	})
+	if err != nil {
+		t.Fatalf("Upsert should not fail when embedder errors: %v", err)
+	}
+	if adapter.has("files-notes:n1") {
+		t.Error("adapter should not have an entry (no vector after embedder failure)")
 	}
 }
 

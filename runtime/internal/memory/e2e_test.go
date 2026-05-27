@@ -95,7 +95,7 @@ func openRealLayer(t *testing.T) (Layer, memadapter.Adapter) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	return New(adapter, store, silentLogger), adapter
+	return New(adapter, store, nil, silentLogger), adapter
 }
 
 // fixture: 8 messages across 2 Gmail threads + 3 participants.

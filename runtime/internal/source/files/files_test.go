@@ -117,7 +117,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatalf("memlayer.OpenStore: %v", err)
 	}
 	t.Cleanup(func() { _ = layerStore.Close() })
-	layer := memlayer.New(memAdpt, layerStore, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	layer := memlayer.New(memAdpt, layerStore, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Construct + Init the source.
 	src := New()

@@ -101,7 +101,7 @@ func newSourcesServer(t *testing.T) *sourcesServer {
 		t.Fatalf("memlayer.OpenStore: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	layer := memlayer.New(ma, memStore, logger)
+	layer := memlayer.New(ma, memStore, nil, logger)
 
 	engine := permission.NewEngine(permStore, w)
 

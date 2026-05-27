@@ -373,7 +373,7 @@ func openMemoryDeps(cmd *cobra.Command) (*memoryDeps, error) {
 	return &memoryDeps{
 		adapter: adapter,
 		store:   store,
-		layer:   memlayer.New(adapter, store, logger),
+		layer:   memlayer.New(adapter, store, nil, logger),
 	}, nil
 }
 

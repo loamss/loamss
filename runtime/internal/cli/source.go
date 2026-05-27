@@ -21,6 +21,12 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/pgvector" // registers memory:pgvector
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/qdrant"   // registers memory:qdrant
 	_ "github.com/loamss/loamss/runtime/internal/adapter/memory/sqlite"   // registers memory:sqlite-vec
+	"github.com/loamss/loamss/runtime/internal/adapter/model"
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/anthropic" // registers model:anthropic
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/dummy"     // registers model:dummy
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/none"      // registers model:none
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/ollama"    // registers model:ollama
+	_ "github.com/loamss/loamss/runtime/internal/adapter/model/openai"    // registers model:openai
 	"github.com/loamss/loamss/runtime/internal/adapter/storage"
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted" // registers storage:fs-encrypted
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/gcs"         // registers storage:gcs
@@ -542,12 +548,13 @@ func maskedConfig(in map[string]any) map[string]any {
 // sourceDeps bundles the persistence + storage handles the source CLI
 // commands share. Lifetime: one set per CLI invocation.
 type sourceDeps struct {
-	store      *source.Store
-	audit      *audit.SQLite
-	storage    storage.Adapter
-	memAdapter memadapter.Adapter
-	memLayer   memlayer.Layer
-	logger     *slog.Logger
+	store         *source.Store
+	audit         *audit.SQLite
+	storage       storage.Adapter
+	memAdapter    memadapter.Adapter
+	memLayer      memlayer.Layer
+	modelAdapters []model.Adapter
+	logger        *slog.Logger
 }
 
 func (d *sourceDeps) Close() {
@@ -565,6 +572,9 @@ func (d *sourceDeps) Close() {
 	}
 	if d.memAdapter != nil {
 		_ = d.memAdapter.Close(context.Background())
+	}
+	for _, a := range d.modelAdapters {
+		_ = a.Close(context.Background())
 	}
 }
 
@@ -622,15 +632,43 @@ func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
 		return nil, fmt.Errorf("opening memory layer store: %w", err)
 	}
 	logger := newLogger(cfg.Log, cmd.ErrOrStderr())
-	layer := memlayer.New(memAdapter, layerStore, logger)
+
+	// Model adapters for auto-embedding on sync. Without an embedder
+	// wired here, `loamss source sync` lands content into the memory
+	// adapter but with no vectors, so memory.query returns empty even
+	// when the user has an embedding model configured. We only open
+	// adapters when the user has actually configured `models:` —
+	// opening model:none as a fallback would add a chatty startup log
+	// to every CLI invocation for no behavior gain (no embedder means
+	// the layer just stores without vectors, same as before).
+	var modelAdapters []model.Adapter
+	var embedder memlayer.Embedder
+	if len(cfg.Models) > 0 {
+		modelAdapters, err = openAllModelAdapters(ctx, cfg.Models)
+		if err != nil {
+			_ = store.Close()
+			_ = w.Close(context.Background())
+			_ = stor.Close(context.Background())
+			_ = memAdapter.Close(context.Background())
+			_ = layerStore.Close()
+			return nil, fmt.Errorf("opening model adapters: %w", err)
+		}
+		embedAdapter := pickEmbeddingAdapter(ctx, modelAdapters, logger)
+		embedder = &embeddingAdapterBridge{
+			adapter: embedAdapter,
+			picker:  pickEmbeddingModelID,
+		}
+	}
+	layer := memlayer.New(memAdapter, layerStore, embedder, logger)
 
 	return &sourceDeps{
-		store:      store,
-		audit:      w,
-		storage:    stor,
-		memAdapter: memAdapter,
-		memLayer:   layer,
-		logger:     logger,
+		store:         store,
+		audit:         w,
+		storage:       stor,
+		memAdapter:    memAdapter,
+		memLayer:      layer,
+		modelAdapters: modelAdapters,
+		logger:        logger,
 	}, nil
 }
 

@@ -63,16 +63,40 @@ type Layer interface {
 	Close() error
 }
 
+// Embedder is the narrow interface the memory layer needs to
+// auto-embed Upserts whose Entry.Embeddings field is empty. The
+// memory layer holds an Embedder rather than a model.Adapter so
+// the memory package doesn't depend on the model adapter package
+// (which would create an import cycle once model adapters want
+// to consume memory).
+//
+// Optional: a Layer can be constructed without one (pass nil).
+// When nil, the existing behavior holds — entries without
+// pre-computed embeddings get stored without vectors and won't
+// surface in memory.query.
+type Embedder interface {
+	// Embed turns text into a vector. Length is determined by the
+	// underlying model — the memory adapter must accept whatever
+	// dimension this returns.
+	Embed(ctx context.Context, text string) ([]float32, error)
+}
+
 // New constructs a Layer that writes to the given adapter and stores
-// derived state in store.
-func New(adapter Adapter, store *Store, logger *slog.Logger) Layer {
+// derived state in store. embedder is optional — pass nil to
+// preserve the original "ingest now, embed later via an organizer"
+// model. When non-nil, Upserts whose Entry.Embeddings is empty get
+// auto-embedded against entry.Content before the adapter write, so
+// search works out of the box for everyday source connectors that
+// don't compute embeddings themselves (source:files, source:gmail).
+func New(adapter Adapter, store *Store, embedder Embedder, logger *slog.Logger) Layer {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &layerImpl{
-		adapter: adapter,
-		store:   store,
-		logger:  logger,
+		adapter:  adapter,
+		store:    store,
+		embedder: embedder,
+		logger:   logger,
 	}
 }
 
@@ -80,9 +104,10 @@ func New(adapter Adapter, store *Store, logger *slog.Logger) Layer {
 // arguments; safe for concurrent use (the store synchronizes its
 // own writes).
 type layerImpl struct {
-	adapter Adapter
-	store   *Store
-	logger  *slog.Logger
+	adapter  Adapter
+	store    *Store
+	embedder Embedder // optional; nil = no auto-embedding
+	logger   *slog.Logger
 }
 
 // Upsert writes the entry to the adapter and updates derived state.
@@ -100,16 +125,36 @@ func (l *layerImpl) Upsert(ctx context.Context, entry Entry) error {
 		return errors.New("memory layer: Upsert requires Namespace and ID")
 	}
 
-	// Adapter write first — but only when the entry has an embedding.
-	// Entries without embeddings still get their entities + threads
-	// derived (the layer's tables don't need vectors); they just
-	// aren't reachable via vector search until embeddings arrive.
-	// Today this is the common case when no embedding-capable model
-	// adapter is configured (e.g., Gmail sync without Ollama).
+	// Adapter write. Three branches by how the entry's vector is
+	// resolved:
+	//
+	//   1. Entry.Embeddings populated by the caller (typical for
+	//      organizer capsules that did their own chunking/embedding).
+	//      Use as-is — caller knows best.
+	//   2. Embedder configured + Entry.Content non-empty. Auto-embed
+	//      against the content so source connectors that don't run
+	//      their own model (source:files, source:gmail today) still
+	//      land searchable entries.
+	//   3. Neither — store without a vector. Entity + thread derivation
+	//      still runs (the layer's tables don't need vectors); the
+	//      entry just won't surface in memory.query until re-upserted
+	//      with an embedding.
 	adapterID := composeAdapterID(entry.Namespace, entry.ID)
 	metadata := withNamespace(entry.Metadata, entry.Namespace, entry.ID)
-	if len(entry.Embeddings) > 0 {
-		if err := l.adapter.Upsert(ctx, adapterID, entry.Embeddings, metadata); err != nil {
+	vector := entry.Embeddings
+	if len(vector) == 0 && l.embedder != nil && entry.Content != "" {
+		emb, err := l.embedder.Embed(ctx, entry.Content)
+		if err != nil {
+			// Surface but don't fail — the entry still lands; just
+			// without a vector. An organizer can backfill later.
+			l.logger.Warn("memory layer: auto-embed failed; storing without vector",
+				"namespace", entry.Namespace, "id", entry.ID, "err", err)
+		} else {
+			vector = emb
+		}
+	}
+	if len(vector) > 0 {
+		if err := l.adapter.Upsert(ctx, adapterID, vector, metadata); err != nil {
 			return fmt.Errorf("memory layer: adapter upsert: %w", err)
 		}
 	} else {

@@ -305,6 +305,13 @@ func (f *filesSource) Sync(ctx context.Context, cursor []byte) (source.SyncResul
 			// No frontmatter; use the whole file as content.
 			entryContent = string(raw)
 		}
+		// Stash a bounded content snippet in metadata so MCP consumers
+		// (memory.query, agents) can show users the gist of a hit
+		// without a second round-trip to storage. Cap at 2 KiB — long
+		// enough for a useful preview, short enough to keep the
+		// metadata blob in the kilobyte range. The full body lives in
+		// storage (storage.read) for callers that need it all.
+		metadata["snippet"] = truncateForSnippet(entryContent, 2048)
 
 		// Write the raw file to storage for the walkaway promise:
 		// sources/<source_name>/files/<path>.
@@ -505,4 +512,21 @@ func buildMetadata(rel string, parsed parsedFile, mtime time.Time) map[string]an
 		m["frontmatter"] = parsed.extras
 	}
 	return m
+}
+
+// truncateForSnippet returns the first max bytes of s, trimmed at a
+// rune boundary, with an ellipsis appended when truncation happened.
+// Used to bound the metadata.snippet field so the memory adapter's
+// metadata blob stays small.
+func truncateForSnippet(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	// Walk back to the nearest rune boundary so we don't slice a
+	// multi-byte character in half.
+	cut := max
+	for cut > 0 && (s[cut]&0xC0) == 0x80 {
+		cut--
+	}
+	return s[:cut] + "…"
 }

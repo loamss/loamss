@@ -42,7 +42,7 @@ func e2eHarness(t *testing.T) memlayer.Layer {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	layer := memlayer.New(adapter, store, nil)
+	layer := memlayer.New(adapter, store, nil, nil)
 
 	// Seed a tiny fixture: one Gmail thread, three messages between
 	// Sarah and Bob. Embeddings are simple character-frequency

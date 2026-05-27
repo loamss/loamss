@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -113,7 +114,10 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("opening memory layer store: %w", err)
 	}
 	defer func() { _ = memLayerStore.Close() }()
-	memLayer := memlayer.New(memAdapter, memLayerStore, logger)
+	// The memory layer is constructed below after the embedding
+	// adapter has been picked, so it can auto-embed Upserts whose
+	// caller didn't compute vectors (source:files, source:gmail).
+	var memLayer memlayer.Layer
 
 	// Model adapters — multiple may be configured (e.g., Anthropic
 	// for generation + an OpenAI/voyage-style adapter for embeddings).
@@ -143,6 +147,18 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// graceful-degradation isError so callers see a clear "no
 	// embedding model" message rather than a cryptic failure.
 	embeddingAdapter := pickEmbeddingAdapter(ctx, modelAdapters, logger)
+
+	// Construct the memory layer now that the embedding adapter is
+	// resolved. When the user has an embedding-capable adapter
+	// configured (Ollama with nomic-embed-text, OpenAI text-embedding-3,
+	// …), the layer auto-embeds any Upsert that lacks pre-computed
+	// vectors — closing the gap where source:files / source:gmail
+	// ingest content the user expects to be searchable but gets no
+	// vectors out of memory.query.
+	memLayer = memlayer.New(memAdapter, memLayerStore, &embeddingAdapterBridge{
+		adapter: embeddingAdapter,
+		picker:  pickEmbeddingModelID,
+	}, logger)
 
 	// generatorAdapter is the adapter model.call uses for synchronous
 	// text generation. Same selection pattern as embeddingAdapter —
@@ -612,4 +628,66 @@ func init() {
 	startCmd.Flags().BoolVar(&startAutoOpen, "open", false,
 		"launch the system browser at the console URL after starting (useful for first run)")
 	rootCmd.AddCommand(startCmd)
+}
+
+// embeddingAdapterBridge implements memlayer.Embedder by delegating
+// to a model.Adapter's Embed method. The adapter + model-id lookup
+// is captured at construction; subsequent embeds are a single
+// adapter call.
+//
+// The picker is a function so the bridge stays decoupled from the
+// embedding-model-selection logic (which lives in start.go but
+// could move to the model adapter package later without touching
+// this type).
+type embeddingAdapterBridge struct {
+	adapter model.Adapter
+	picker  func(ctx context.Context, a model.Adapter) string
+
+	once    sync.Once
+	modelID string
+}
+
+// Embed implements memlayer.Embedder. Returns an empty vector +
+// nil error when no embedding model is configured — the layer
+// stores the entry without a vector in that case rather than
+// failing the upsert.
+func (b *embeddingAdapterBridge) Embed(ctx context.Context, text string) ([]float32, error) {
+	b.once.Do(func() {
+		if b.adapter != nil && b.picker != nil {
+			b.modelID = b.picker(ctx, b.adapter)
+		}
+	})
+	if b.modelID == "" {
+		return nil, nil // no embedding-capable model wired
+	}
+	resp, err := b.adapter.Embed(ctx, model.EmbedRequest{
+		ModelID: b.modelID,
+		Text:    text,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Vector, nil
+}
+
+// pickEmbeddingModelID returns the first model ID on the adapter
+// whose Capabilities include "embeddings", or "" when none.
+// Mirrors pickEmbeddingModel in tools_memory_query.go but takes a
+// pre-resolved adapter instead of a (adapter, requested) pair.
+func pickEmbeddingModelID(ctx context.Context, a model.Adapter) string {
+	if a == nil {
+		return ""
+	}
+	models, err := a.Models(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, m := range models {
+		for _, c := range m.Capabilities {
+			if c == "embeddings" {
+				return m.ID
+			}
+		}
+	}
+	return ""
 }
