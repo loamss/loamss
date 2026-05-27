@@ -31,7 +31,7 @@ Goal: one user, one device, one real workflow, end to end.
 - [x] Auto-embedding on ingest (v0.1.5) — closes the "ingest worked, query returns nothing" gap for the standard flow. The memory layer auto-embeds entries that arrive without vectors when an embedding-capable model adapter is configured.
 - [x] Console: setup wizard (Welcome → Storage → Memory → Models → Connect → Done) + five interactive panes (Sources, Capsules, Apps, Approvals, Activity). Embedded in the runtime binary.
 - [x] CLI: Phase 1 MVP cut shipped (init, doctor, start, status, version, config, capsule, client, grant, audit, approve, export, source)
-- [x] Docs: getting started, building your first capsule — shipped: [docs/setup-gmail.md](docs/setup-gmail.md), [docs/build-your-first-capsule.md](docs/build-your-first-capsule.md), [docs/connect-your-app.md](docs/connect-your-app.md), [sources.md](sources.md), [docs/demo-script-90s.md](docs/demo-script-90s.md)
+- [x] Docs: getting started, building your first capsule — shipped: [docs/setup-gmail.md](docs/setup-gmail.md), [docs/build-your-first-capsule.md](docs/build-your-first-capsule.md), [docs/connect-your-app.md](docs/connect-your-app.md), [sources.md](sources.md)
 - [x] Distribution: Homebrew tap ([`loamss/homebrew-loamss`](https://github.com/loamss/homebrew-loamss)) + npm SDK ([`@loamss/sdk`](https://www.npmjs.com/package/@loamss/sdk)), both auto-published on tag via GitHub Actions
 - [x] External-agent reference (`sdk/typescript/examples/demo-agent/`) — Path-B MCP client with local Ollama brain, demonstrates allowed + denied capability paths end-to-end
 - [ ] Reference capsule: email triage ("clear my inbox with my approval per send")

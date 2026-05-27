@@ -220,8 +220,6 @@ Three things to try once you're in:
 2. **Install a capsule.** Capsules pane → `+ Install capsule`, paste `sdk/typescript/examples/daily-brief` from the cloned repo. The runtime issues its permission grants and shows the slip.
 3. **Pair an external agent.** Apps pane → `+ Pair an app`, then run [`sdk/typescript/examples/demo-agent`](sdk/typescript/examples/demo-agent/) — a small Node script that uses a local Ollama model and asks your memory questions through MCP. Watch the Activity feed log each call as allowed or denied.
 
-The recorded 90-second walkthrough of this flow (substrate → ingest → external agent → audit) lives at [`docs/demo-script-90s.md`](docs/demo-script-90s.md). It's a fresh-machine script — every step is a real command, end-to-end verified.
-
 `loamss export` produces a complete archive of your storage + memory + audit history. Walk away whenever.
 
 ---
