@@ -99,29 +99,25 @@ Ordered roughly by dependency. W1–W3 are blocking for the cloud
 goal; W4 (Path A reference) can land in parallel because it doesn't
 depend on cloud deploy to be a useful example.
 
-### W1 — Make the install path work for non-authors (small but blocking)
+### W1 — Make the install path work for non-authors ✅ DONE
 
-**Why first**: README claims `brew install loamss` works. Today it
-404s for anyone who isn't authenticated against the private GitHub
-repo. Cloud deployment isn't the most pressing blocker — the
-install-from-tap blocker is.
+Decision: option A (repo made public). Verified end-to-end:
 
-**Two options:**
+```
+$ brew tap loamss/loamss && brew install loamss && loamss version
+Tapped 1 formula (14 files, 13.2KB).
+🍺  /opt/homebrew/Cellar/loamss/0.1.5: 6 files, 47.3MB, built in 2 seconds
+loamss v0.1.5
+```
 
-| Option                         | Effort   | Trade                                                                                                                                                                                                |
-| ------------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A. Make the repo public.**   | Hours    | Cleanest. The README, docs, code are all openly published. Some legacy operational artifacts (env names, etc.) may need scrubbing. Also makes npm provenance possible later (currently blocked).      |
-| **B. Mirror release tarballs to a public CDN/bucket.** | 1–2 days | Repo stays private. Set up a workflow that copies release artifacts to a public GCS bucket / Cloudflare R2. Homebrew formula points at the public URL. More machinery to maintain. |
+Side benefits unlocked by the repo going public:
+- npm `--provenance` now possible (currently disabled in the
+  release workflow because of the private-repo block — re-enable
+  in a follow-up PR for future SDK publishes).
+- README, scenarios, RFCs are all openly readable; no more
+  "I'd link you but the repo is private" friction.
 
-**Recommendation: A** unless there's a specific reason to keep the
-repo private. The codebase is intended to be Apache-2.0 open source
-per the LICENSE; private was a release-pipeline artifact, not a
-design choice.
-
-**Decision needed**: pick A or B. Then execute.
-
-**Exit criterion**: a fresh machine can `brew tap loamss/loamss &&
-brew install loamss && loamss start` with no auth setup.
+No further W1 work.
 
 ---
 
