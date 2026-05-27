@@ -1,0 +1,15 @@
+{
+  "name": "loamss-example-demo-agent",
+  "version": "0.1.0",
+  "description": "An external MCP client agent that uses a local Ollama model to reason over a user's Loamss memory. Shows allowed + denied capability paths.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "pair": "bun src/pair.ts",
+    "ask": "bun src/agent.ts",
+    "write": "bun src/agent.ts --write"
+  },
+  "dependencies": {
+    "@loamss/sdk": "^0.1.4"
+  }
+}
