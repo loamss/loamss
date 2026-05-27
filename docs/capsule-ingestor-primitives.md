@@ -1,8 +1,16 @@
 # Capsule ingestor primitives — design RFC
 
-**Status**: design, not yet implemented.
-**Author**: project working notes; revisit before locking the wire.
+**Status**: implemented; doc retained as the spec the implementation honors.
 **Scope**: the runtime ↔ capsule contract needed to let a capsule act as a data-source connector (the `ingestor` role from `capsule-spec.md`) without losing the things in-tree `source.Source` connectors get for free.
+
+> **Framing.** Source ingestion — whether in-tree or via capsule —
+> is a **transitional** path. The long-term shape Loamss optimizes for
+> is **apps writing to your Loamss as their backing store** (see
+> [`../native-apps.md`](../native-apps.md)); ingestors exist for users
+> whose data still lives in legacy SaaS. This spec stays accurate so
+> migration tooling can be built well; just don't read it as "the
+> primary way data arrives in Loamss." That's the inverse of the
+> thesis.
 
 ## Why this exists
 

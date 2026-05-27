@@ -1,6 +1,17 @@
 # Source Connector Specification v0.1 (draft)
 
-This document defines the **source connector** layer: the components that pull data from external systems (Gmail, Calendar, Slack, Drive, …) into the user's storage and memory. Source connectors are the ingestion edge of the runtime. Everything that ever ends up in user memory got there because a source put it there, or because a capsule transformed something a source put there.
+> **Read this first — source connectors are transitional.** Loamss's
+> design center is **apps writing to your Loamss as their backing
+> store** (see [`native-apps.md`](native-apps.md)). Source connectors
+> exist for users whose data currently lives in legacy SaaS (Gmail,
+> Calendar, Drive, Slack, …) and need to mirror it into their Loamss
+> as a one-time migration. The long-term shape is native apps that
+> write to Loamss directly, removing the need to scrape upstream
+> services. This spec stays in place because the SPI is real and the
+> existing connectors work; just don't read it as "the way Loamss
+> primarily acquires data." That's the inverse of the actual thesis.
+
+This document defines the **source connector** layer: the components that pull data from external systems (Gmail, Calendar, Slack, Drive, …) into the user's storage and memory. Source connectors are the ingestion edge of the runtime when used; everything that arrives in user memory via this path got there because a source put it there, or because a capsule transformed something a source put there.
 
 > **Status: draft.** The interface will change before v1.0. Connector authors targeting a pre-v1.0 spec should expect breaking changes.
 

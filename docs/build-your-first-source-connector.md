@@ -1,10 +1,31 @@
 # Build your first source connector
 
+> **Read these two things before you start.**
+>
+> **One — the role this code plays.** Source connectors are
+> **transitional**. Loamss's design center is apps writing to your
+> Loamss as their backing store (see [`../native-apps.md`](../native-apps.md));
+> source connectors exist for users whose data still lives in legacy
+> SaaS. If you're building a *new* product, prefer a **Path A native
+> app** (`native-apps.md`) over building a source connector to mirror
+> from a legacy service. Connectors are appropriate when you're
+> migrating data **off** an old service **into** Loamss, not when
+> you're keeping the old service as the source of truth indefinitely.
+>
+> **Two — how new connectors ship.** New connectors ship as **capsule
+> ingestors**, not as in-tree Go code under `runtime/internal/source/`.
+> The in-tree path exists only for the two SPI reference
+> implementations (`source:files`, `source:gmail`) that prove the SPI
+> handles the no-auth and OAuth extremes. Everything else — Calendar,
+> Drive, Slack, GitHub, Notion, Linear, RSS — goes through the capsule
+> ingestor role from `capsule-spec.md`. See `sources.md` for the
+> principle and `CLAUDE.md` for the rule. **If you're shipping a real
+> connector, follow [`build-your-first-capsule.md`](build-your-first-capsule.md)
+> with the `ingestor` role manifest.**
+
 This is a hands-on walkthrough for adding a new **source connector** to Loamss — the kind of code that pulls data from somewhere external (an RSS feed, a calendar API, a Slack workspace) into the user's storage and memory.
 
-> **Read this first.** New connectors ship as **capsule ingestors**, not as in-tree Go code under `runtime/internal/source/`. The in-tree path exists only for the two SPI reference implementations (`source:files`, `source:gmail`) that prove the SPI handles the no-auth and OAuth extremes. Everything else — Calendar, Drive, Slack, GitHub, Notion, Linear, RSS — goes through the capsule ingestor role from `capsule-spec.md`. See `sources.md` for the principle and `CLAUDE.md` for the rule.
->
-> **This document keeps the in-tree Go walkthrough below because:** (a) it's the closest thing to a literal-form description of what an ingestor must do, and (b) on the rare day someone needs to extend a reference implementation to cover a new SPI gap, they'll need it. **If you're shipping a real connector, follow [`build-your-first-capsule.md`](build-your-first-capsule.md) with the `ingestor` role manifest.**
+> **The in-tree Go walkthrough below stays because:** (a) it's the closest thing to a literal-form description of what an ingestor must do, and (b) on the rare day someone needs to extend a reference implementation to cover a new SPI gap, they'll need it.
 
 You'll build `source:hackernews` end-to-end: 90 lines of Go, no auth (HN's API is public), incremental sync via the "last seen item id" cursor pattern, ~5 minutes of typing once you've read this page. The example is hypothetical; we don't intend to land an in-tree HN connector — it's just the smallest possible OAuth-free shape to illustrate the SPI.
 

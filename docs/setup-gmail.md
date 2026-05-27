@@ -1,5 +1,15 @@
 # Setting up `source:gmail`
 
+> **Transitional connector.** This connector mirrors data **from
+> Gmail** into your Loamss. It exists because most users still have
+> years of email in Gmail today. The long-term shape Loamss
+> optimizes for is a **native email app** that uses your Loamss as
+> its backing store — see [`../native-apps.md`](../native-apps.md).
+> If you're building such an app, you don't need this connector;
+> your app writes mail into Loamss directly. If you have legacy
+> Gmail data you want in your Loamss now, this guide gets you
+> there.
+
 The Gmail connector authenticates against Google via OAuth 2.0 and pulls messages into your Loamss runtime. Before you can run `loamss source authenticate gmail-personal`, you need to register Loamss as a "Desktop application" OAuth client in your own Google Cloud project. That's a one-time step per Loamss install.
 
 This guide walks through it. Estimated time: 10 minutes.

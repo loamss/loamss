@@ -4,18 +4,41 @@ Concrete end-to-end use cases. These exist to keep the architecture honest: any 
 
 > **Status: draft.** Add scenarios as they come up. Remove or revise scenarios that no longer reflect the design.
 
+> **Framing note.** Loamss's design center is **apps writing to your
+> Loamss as their backing store** (see [`native-apps.md`](native-apps.md)).
+> Some scenarios below describe **transitional flows** that mirror
+> data from legacy SaaS into a Loamss via source connectors — those
+> flows still work, but the long-term shape they're a bridge to is a
+> native Path A app that writes the same data directly. Scenarios
+> involving source ingestion are flagged inline.
+
 ## Scenario 1 — Consumer AI plugs in
 
 A user runs Loamss on their laptop. They want ChatGPT to know who they are without uploading their whole life to OpenAI.
 
-1. User installs the `loamss` binary, runs `loamss init`. Picks storage (local encrypted folder), memory (SQLite + sqlite-vec). Adds a Claude API key for the organizer capsules (optional — can be deferred).
-2. User connects Gmail and Calendar via OAuth. Ingestor capsules pull data into storage. Organizer capsules build memory: people, threads, projects.
-3. User goes to ChatGPT, adds Loamss as an MCP server using a pairing code from `loamss client pair`.
-4. Loamss console shows a permission slip: ChatGPT requests `email.read`, `calendar.read`, `memory.query`. User narrows `memory.query` to `entities: ["people", "projects"], data_classes_excluded: ["health"]`. Approves.
-5. In ChatGPT, the user says *"draft a reply to Sarah about the contract."* ChatGPT calls Loamss via MCP for context, drafts locally, returns the draft.
-6. User edits, hits send. ChatGPT calls Loamss's `email.send` tool. Loamss pauses for approval (consequential action), user confirms, send happens via Loamss's Gmail OAuth, audit log records the full chain.
+> *This scenario shows both shapes: the steady-state (native email app
+> writes mail into Loamss) and the transitional bridge (legacy Gmail
+> ingested via source connector). The steady-state is the design
+> center; the transitional path exists for users who haven't yet
+> moved to a native email app.*
 
-**What this stresses**: pairing primitive, scoped grants, consequential-action gating, the fact that the model call happens in the *client*, not Loamss.
+**Steady-state (Path A native apps):**
+
+1. User installs the `loamss` binary, runs `loamss init`. Picks storage (local encrypted folder), memory (SQLite + sqlite-vec). Adds a Claude API key for organizer capsules (optional).
+2. User installs **a native email app built on Loamss** (Path A — see [`native-apps.md`](native-apps.md)). The app pairs with their Loamss, requests `email.read/write` capabilities scoped to its own entity types, and from that day forward holds the user's email in their own storage. Same shape for a native calendar app, notes app, etc.
+3. User goes to ChatGPT, adds Loamss as an MCP server using a pairing code from `loamss client pair`.
+4. Loamss console shows a permission slip: ChatGPT requests `memory.query`, `memory.read`. User narrows to `entities: ["people", "projects"], data_classes_excluded: ["health"]`. Approves.
+5. In ChatGPT, the user says *"draft a reply to Sarah about the contract."* ChatGPT calls Loamss via MCP for context, drafts locally, returns the draft.
+6. User edits, hits send. ChatGPT calls the user's email app's tool surface (also exposed via Loamss MCP). Loamss pauses for approval (consequential action), user confirms, send happens via the email app's own SMTP, audit log records the full chain.
+
+**Transitional bridge (legacy Gmail still in Gmail.com):**
+
+If the user hasn't moved to a native email app yet and their email still lives at Gmail:
+- Steps 1, 3–5 are unchanged.
+- Step 2 uses `source:gmail` to mirror Gmail messages into Loamss as a one-time or ongoing migration. This is transitional — once a native email app is paired, the source connector becomes redundant for new email.
+- Step 6's `email.send` runs through an actuator capsule that uses Gmail's API via the same OAuth credentials. As above, this is the bridge form; a native app removes the need.
+
+**What this stresses**: pairing primitive, scoped grants, consequential-action gating, the fact that the model call happens in the *client*, not Loamss. Both shapes (Path A native + transitional source) work today.
 
 ## Scenario 2 — Time-boxed specialist client
 
@@ -48,10 +71,10 @@ A user uses Cursor for code and ChatGPT for everything else.
 1. Both have MCP clients. Both are paired with the same Loamss.
 2. Cursor has grants: `files.read` (scope: `paths: notes/engineering/*, code/**`), `memory.query` (scope: `entities: ["project", "decision", "topic"]`), `calendar.read` (scope: `time_range: { today }`).
 3. ChatGPT has grants: full set as in Scenario 1.
-4. In Cursor, the user asks *"what did I decide about the auth refactor last week?"* The decision was made in a Slack thread, not in code. Cursor queries Loamss's memory, gets the decision back, and shows it.
-5. The Slack thread was ingested by the Slack connector (Phase 2 — this scenario is not end-to-end testable until Slack lands). The decision was extracted by an organizer capsule. Cursor never had to see Slack directly.
+4. In Cursor, the user asks *"what did I decide about the auth refactor last week?"* The decision was made in a Slack-style conversation, not in code. Cursor queries Loamss's memory, gets the decision back, and shows it.
+5. The conversation was either (a) authored in a **Path A native chat app** that writes messages directly into the user's Loamss, or (b) mirrored from a legacy Slack workspace via a transitional `slack-ingestor` capsule. The decision was extracted by an organizer capsule. Cursor never had to see Slack directly.
 
-**What this stresses**: memory as the cross-surface unifier. Two different AI tools, two different scopes, one shared brain. The unifier is the whole point of Loamss.
+**What this stresses**: memory as the cross-surface unifier. Two different AI tools, two different scopes, one shared brain. The unifier is the whole point of Loamss. The same scenario works whether the conversation arrived via a native chat app (steady state) or a transitional Slack ingestor (bridge for users still on Slack).
 
 ## Scenario 5 — Creator publishing (the videos scenario)
 
