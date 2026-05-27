@@ -18,16 +18,17 @@ Loaded automatically by Claude Code at session start. Keep it concise and curren
 
 ## What Loamss is, in one paragraph
 
-Loamss is open-source personal data infrastructure. The user brings storage, identity, and compute. Loamss ingests data from connected sources into user-owned storage, builds a durable memory layer (entity resolution, vector index, knowledge graph) on top of it, and exposes governed views via MCP to whatever AI tools the user connects — Claude, ChatGPT, Cursor, peer Loamss instances, content platforms, scripts. Every external read and every external write-back (metrics, revenue events, etc.) passes through the permission framework and the audit log. The tools are interchangeable; the brain is permanent and belongs to the user.
+Loamss is open-source personal data infrastructure. The user brings storage, identity, and compute. **The thesis: apps are built on the user's Loamss as their backing store, not the other way around.** A native email app writes the user's email INTO their Loamss; a native notes app writes notes there; a native calendar app writes events there. Loamss builds a durable memory layer (entity resolution, vector index, knowledge graph) over what's stored, and exposes governed views via MCP to whatever AI tools the user pairs — Claude, ChatGPT, Cursor, peer Loamss instances, content platforms, scripts. Every external read and every external write passes through the permission framework and the audit log. The apps and the tools are interchangeable; the substrate is permanent and belongs to the user. Source connectors (`source:files`, `source:gmail`, etc.) exist as a **transitional** path for users whose data still lives in legacy SaaS; the long-term shape is apps writing directly to Loamss, removing the need to mirror anything.
 
 ## Core principles (these override convenience)
 
 1. **The user owns their data.** Loamss never holds primary copies. Storage and memory backends are user-configured at deploy. If we ever feel tempted to "just keep a copy for convenience," stop.
-2. **Capabilities are explicit and revocable.** Every data access goes through the permission framework. No back doors, no implicit grants, no "trusted" capsules that bypass it.
-3. **Models are pluggable.** Never assume a specific model. Routing rules and model identity belong to the user.
-4. **Open by default.** Specs, runtime, SDKs, adapters — all open source. Closed code is a smell.
-5. **Boring is good.** This is infrastructure. Prefer stable, well-understood tools over novel ones. Stability is a feature.
-6. **Audit everything.** Every data access, every model call, every external action gets logged. The audit log is a first-class user-facing surface, not a debug artifact.
+2. **Apps come to Loamss, not the other way around.** We don't build Gmail support; if Gmail wants to interoperate, Gmail builds Path B integration. Source connectors for legacy services are transitional, not the design center.
+3. **Capabilities are explicit and revocable.** Every data access goes through the permission framework. No back doors, no implicit grants, no "trusted" capsules that bypass it.
+4. **Models are pluggable.** Never assume a specific model. Routing rules and model identity belong to the user.
+5. **Open by default.** Specs, runtime, SDKs, adapters — all open source. Closed code is a smell.
+6. **Boring is good.** This is infrastructure. Prefer stable, well-understood tools over novel ones. Stability is a feature.
+7. **Audit everything.** Every data access, every model call, every external action gets logged. The audit log is a first-class user-facing surface, not a debug artifact.
 
 ## Repo layout
 
@@ -113,6 +114,7 @@ Build tooling (planned, not yet present):
 - Telemetry that phones home. If we ever want it, it's opt-in and goes through the same consent system as everything else.
 - Anything that makes the runtime hard to self-host. Single binary, no required cloud services.
 - **Provider-specific source connectors in the runtime tree.** The two existing in-tree connectors (`source:files`, `source:gmail`) exist as SPI reference implementations — one no-auth, one OAuth. Calendar, Drive, Slack, GitHub, and every connector after them ship as **capsules under the `ingestor` role**, not as new entries in `runtime/internal/source/`. Locking provider-specific code into the runtime fossilizes the catalogue and forces a runtime release for every new connector. The marketplace is the extension path.
+- **Drifting from the substrate thesis.** When discussing features, the default mental model is "apps write to Loamss, Loamss exposes views to AI tools" — not "Loamss scrapes SaaS, Loamss feeds AI tools." Source-ingestion language is fine when describing transitional migration tools; it's a mistake when describing the steady-state architecture. If a design decision implies that Loamss is downstream of SaaS X, push back — the right shape is usually "X integrates with the user's Loamss via Path B, or a native alternative exists via Path A."
 
 ## Where things are heading
 

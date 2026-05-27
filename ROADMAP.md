@@ -2,6 +2,8 @@
 
 The plan is structured so each phase ships something usable, even if narrow. Each phase ends with a "stop and validate" moment — real users on real data — before committing to the next.
 
+> **Framing.** The long-term shape Loamss optimizes for is **apps built on top of a user's Loamss as their backing store** — see [`native-apps.md`](native-apps.md). Source connectors (Gmail, Calendar, Drive, …) exist as **transitional migration tools** for users whose data still lives in legacy SaaS; they are not the design center. Phases below reflect that ordering: the substrate and the SDK come first, the marketplace + native-app patterns get the long-term investment.
+
 ## Phase 0 — Foundations (weeks 1–4)
 
 Goal: lock down the contracts before we build anything that depends on them.
@@ -25,8 +27,8 @@ Goal: one user, one device, one real workflow, end to end.
 - [x] Storage adapter: `storage:fs-encrypted` (AES-256-GCM at-rest encryption on the local filesystem)
 - [x] Memory adapter: `memory:sqlite` (with embedding-aware k-NN search)
 - [x] Model adapter: `model:anthropic` (+ bonus `model:ollama` for local inference, plus `model:dummy` / `model:none`)
-- [x] First reference connector: Gmail (`source:gmail`) — proves the Source SPI with a real provider. The SPI is generic; Gmail is the demonstration, not the target.
-- [x] Second reference connector: `source:files` — no-auth path, the frictionless demo. With Gmail, this completes the SPI reference set (no-auth + OAuth). All further data sources ship as capsule ingestors.
+- [x] First reference *transitional* connector: Gmail (`source:gmail`) — proves the Source SPI with a real provider. Transitional, not steady-state: for users migrating off Gmail into a Loamss-native email app.
+- [x] Second reference *transitional* connector: `source:files` — no-auth path, used for migrating legacy local files. With Gmail, completes the SPI reference set (no-auth + OAuth). All further data sources ship as capsule ingestors. **All source connectors are transitional bridges, not the long-term architecture.**
 - [x] Reference capsule: daily briefing (`sdk/typescript/examples/daily-brief/`)
 - [x] Auto-embedding on ingest (v0.1.5) — closes the "ingest worked, query returns nothing" gap for the standard flow. The memory layer auto-embeds entries that arrive without vectors when an embedding-capable model adapter is configured.
 - [x] Console: setup wizard (Welcome → Storage → Memory → Models → Connect → Done) + five interactive panes (Sources, Capsules, Apps, Approvals, Activity). Embedded in the runtime binary.
@@ -58,15 +60,16 @@ Goal: developers can build third-party capsules; users have real choice in backe
     - OAuth callback bridge — runtime owns the loopback listener + PKCE; capsule receives access tokens via `oauth.access_token` MCP tool with transparent refresh
 - [x] Reference capsule ingestors: [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) (no-auth) + [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) (Google OAuth)
 - [x] Memory: entity resolution + thread derivation in the memory layer; auto-embedding on ingest (v0.1.5)
-- [ ] Capsule registry MVP: API, web UI, signing, versioning
+- [ ] **Native-app SDK + reference apps** — a worked example Path A app (likely a Loamss-native notes app or email app) that uses the user's Loamss as its backing store, plus an `@loamss/app-sdk` package that codifies the pairing + write-through pattern. This is the highest-leverage Phase 2 item: it's what makes the substrate worth running.
+- [ ] Capsule registry MVP: API, web UI, signing, versioning — geared toward **organizers, exposers, actuators**, with transitional ingestors as a smaller category.
 - [ ] Capsule certification: review pipeline for the canonical registry
 - [ ] Agent host: support for standing tasks ("watch my inbox this week")
 - [ ] Memory: episodic summarization, knowledge graph queries
 - [ ] Creator publishing surface: `content.video` (and friends) MCP resource type with signed-URL streaming, `events.write` capability for platform-side metrics/revenue write-back. See `scenarios.md` §5 and §6.
 
-Once the capsule ingestor primitives land, **Calendar, Drive, Slack, GitHub, Notion, Linear, and the rest of the long tail ship as capsules in the marketplace**, not as in-tree code. The two in-tree connectors (`source:files`, `source:gmail`) remain as the SPI reference implementations.
+Transitional ingestors (Calendar, Drive, Slack, GitHub, Notion, Linear, …) ship as capsules in the marketplace, not as in-tree code. The two in-tree connectors (`source:files`, `source:gmail`) remain as the SPI reference implementations. As Path A native apps emerge for each category, demand for the matching ingestor drops.
 
-**Stop and validate**: capsule developer day. Invite 30 builders. Watch where the SDK frustrates them. Ship five third-party capsules to the registry.
+**Stop and validate**: capsule developer day. Invite 30 builders. Watch where the SDK frustrates them. Ship five third-party capsules to the registry, plus at least one Path A reference app.
 
 ## Phase 3 — Hosted offering and federation (weeks 25–40)
 

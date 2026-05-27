@@ -1,10 +1,19 @@
 # Getting started
 
-A walkthrough for installing Loamss on your laptop, connecting one
-data source, and asking it a question. Plain command list — pick the
-install path that fits your machine and follow the steps top to bottom.
+A walkthrough for installing Loamss on your laptop and pairing an
+external agent against it. Plain command list — pick the install
+path that fits your machine and follow the steps top to bottom.
 
 End-to-end time: about 10 minutes if `brew install` is fast.
+
+> **What Loamss is.** A substrate that your apps and AI tools write
+> to and read from over MCP. The long-term shape is **native Loamss
+> apps** (an email app, a notes app, a calendar app) that use your
+> Loamss as their backing store — see [`native-apps.md`](../native-apps.md)
+> for the architectural pattern. This getting-started walks the
+> simpler entry path: install the substrate, pair an external AI agent,
+> see the trust boundary work. The same primitives carry over to
+> Path A native apps when you're ready to build one.
 
 ---
 
@@ -140,11 +149,33 @@ for everything below.
 
 ---
 
-## 4. Connect a data source
+## 4. Get something into your Loamss
 
-The fastest source to try is a directory of files.
+In the long-term shape, the way data gets into your Loamss is **an
+app writes it there** — your email app writes your email, your notes
+app writes your notes. That ecosystem is early. Two ways to bootstrap
+something queryable today:
 
-### Via the dashboard
+### Option A: pair an external agent that writes (recommended)
+
+The [`demo-agent`](../sdk/typescript/examples/demo-agent/) example is
+an external MCP client (Node + a local Ollama model). It can both
+**read** memory.query results and, with `memory.write` granted,
+**write** new entries. Use it to see the substrate work end-to-end
+without depending on legacy data sources. Walk-through is in the
+[demo-agent README](../sdk/typescript/examples/demo-agent/README.md).
+
+### Option B: migrate legacy data via a transitional source connector
+
+If you have years of notes or email already sitting in legacy
+locations, source connectors mirror that data into your Loamss as a
+one-time migration. **These connectors are transitional — they
+exist for users whose data still lives in legacy SaaS. The long-term
+shape is apps that write to Loamss in the first place.**
+
+The fastest connector to try is the local files connector:
+
+#### Via the dashboard
 
 1. Click **Sources** → **+ Add source**
 2. Pick `source:files`
@@ -155,7 +186,7 @@ The fastest source to try is a directory of files.
    to scope results)
 6. Click **Save**, then **Sync now**
 
-### Via the CLI (equivalent)
+#### Via the CLI (equivalent)
 
 ```bash
 loamss source add source:files --name notes \
@@ -175,13 +206,9 @@ searchable. If you didn't, the entries still land in storage; they
 just won't surface in `memory.query` until an embedding model is
 wired and the source is re-synced.
 
-For Gmail, see [`docs/setup-gmail.md`](setup-gmail.md). For other
-data sources (Calendar, Drive, GitHub, Slack, …) the path is to
-install a **capsule** from the marketplace — those don't ship in
-the runtime tree. The marketplace is in progress; for now, the
-in-repo reference capsules at
-[`sdk/typescript/examples/`](../sdk/typescript/examples/) can be
-installed directly.
+For Gmail, see [`docs/setup-gmail.md`](setup-gmail.md). For Calendar,
+RSS, and other transitional connectors, see the in-repo capsules
+under [`sdk/typescript/examples/`](../sdk/typescript/examples/).
 
 ---
 
@@ -300,12 +327,20 @@ wipe, if you want to keep it.
 
 ## What's next
 
-- **Add more sources.** See [`sources.md`](../sources.md) for the SPI
-  and how to install a capsule ingestor (Gmail, Calendar, RSS, …).
-- **Pair an AI tool.** See [`docs/connect-your-app.md`](connect-your-app.md)
-  for the pairing + grant flow from the app side.
-- **Write a capsule.** See [`docs/build-your-first-capsule.md`](build-your-first-capsule.md)
-  if you want to extend what Loamss can do.
+- **Build a native (Path A) app.** This is the long-term shape Loamss
+  is designed for — an app where your Loamss IS the backing store.
+  Start with [`native-apps.md`](../native-apps.md) for the pattern
+  and worked examples; [`mcp-surface.md`](../mcp-surface.md) is the
+  wire-level reference.
+- **Integrate an existing app (Path B).** Add MCP client support to
+  an app that already has its own database. See
+  [`docs/connect-your-app.md`](connect-your-app.md).
+- **Write a capsule.** Capsules sit inside the substrate — organizers
+  that build memory, exposers that publish data, actuators that take
+  action. See [`docs/build-your-first-capsule.md`](build-your-first-capsule.md).
+- **Migrate legacy data.** Transitional source connectors for Gmail,
+  Calendar, RSS, files — see [`sources.md`](../sources.md). Useful
+  one-time; not the steady-state pattern.
 - **Inspect the audit log.** `loamss audit tail` shows the last N
   events with their hash chain. Every grant check (allow or deny) is
   in there.

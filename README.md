@@ -1,6 +1,6 @@
 # Loamss
 
-**One permission boundary, one memory, one audit ledger — that every AI tool and every app talks to about you.**
+**Personal data infrastructure. Your apps work on your data, in your substrate — not in someone else's database.**
 
 Open source. Self-hosted. Your storage, your keys, your data. Single Go binary; first run is a three-minute wizard.
 
@@ -8,25 +8,23 @@ Open source. Self-hosted. Your storage, your keys, your data. Single Go binary; 
 
 ## The 60-second version
 
-Today your data is scattered. ChatGPT holds one slice of your context, Claude another, Cursor a third — each tool building its own picture of you, separately, in someone else's database. The brains don't talk to each other and you can't see what any of them knows.
+Today your data is scattered across other companies' databases. Your email is at Gmail. Your notes are at Notion. Your photos are at Apple or Google. Your AI tools — Claude, ChatGPT, Cursor — each build their own picture of you, separately, also somewhere else. The apps own the data; you rent the experience.
 
-Loamss flips that. One self-hosted runtime holds your unified memory. Every AI tool, every app, every service pairs with it once and gets a *scoped* view. You decide what each one sees, you watch exactly what they queried, and you can narrow or revoke at any time. If a tool disappears tomorrow, your memory stays.
+Loamss flips that. **You run a substrate. Your apps connect to it.** An email app writes your email into your Loamss. A notes app writes your notes there. AI tools pair in and read what you've allowed. Every read and every write is scoped, audited, and revocable. When you stop using an app, your data stays with you. When you switch AI tools, your memory follows.
 
-The same primitives work beyond AI tools — time-boxed grants for the doctor's office, signed-URL streams for content platforms that don't get to keep your videos, native apps that use Loamss as their backing store instead of building their own database.
-
-> **You own your data. You decide who sees what. You see what happened. You take it with you when you leave.**
+> **You own your data. Your apps work on it. You decide who sees what. You watch what happened. You take it with you when you leave.**
 
 ## What you can actually do with it today
 
+### Run apps that don't own your data
+
+A new generation of apps — **native Loamss apps** — uses your Loamss as their backing store. The email app holds no email; the notes app holds no notes; the calendar app holds no events. All of it lives in your Loamss. Switch apps and your data stays. Sunset an app and you lose nothing. See [`native-apps.md`](native-apps.md) for the architectural pattern and worked examples.
+
+This is the long-term shape. The ecosystem is early — we ship the substrate; building Path A apps is what the SDK is for.
+
 ### Give every AI tool the same brain
 
-Connect Gmail + Calendar + a notes folder + GitHub. Pair Claude, ChatGPT, and Cursor each with their own scoped grant. The result:
-
-- Ask Claude *"what did Sarah and I decide about the contract?"* — pulls from email threads + extracted decisions, all from your local memory.
-- Ask Cursor *"what's the latest on the auth refactor?"* — same brain, different scope (engineering namespace only, no personal email).
-- The Activity pane shows you every query each tool ran, every denial, every grant scope change.
-
-This is what no single AI tool can give you alone. **The cross-tool memory is shipped end-to-end** — pairing, scope projection, memory layer, audit chain.
+Pair Claude, ChatGPT, Cursor each with their own scoped grant against your Loamss. Same memory, different scopes. Ask any tool *"what did Sarah and I decide about the contract?"* — answered from your own substrate. The Activity pane shows every query each tool ran, every denial, every grant scope change. **Shipped end-to-end** — pairing, scope projection, memory layer, audit chain.
 
 ### Bring a specialist in for two hours, watch them leave
 
@@ -36,9 +34,13 @@ Every primitive — time-bounded grants, data-class scoping, hash-chained audit 
 
 ### Publish content without surrendering it
 
-You make videos. A platform supports MCP and onboards you. You grant `content.list` + `content.read` scoped to `tag:public`. The platform streams directly from your own S3 bucket via signed URLs Loamss issues. Every play is logged. The platform writes metrics and revenue back as **attributed claims** — Loamss never silently merges a platform's numbers into ground truth.
+A platform that supports MCP onboards you as a creator. You grant `content.list` + `content.read` scoped to `tag:public`. The platform streams directly from your own S3 bucket via signed URLs Loamss issues. Every play is logged. The platform writes metrics and revenue back as **attributed claims** — Loamss never silently merges a platform's numbers into ground truth.
 
 If the platform sunsets, your library and analytics are still in your storage. Point a new platform at the same Loamss the next day and continue. **Every wire for this is shipped**; the missing piece is a reference platform to demonstrate it.
+
+### Bring your legacy data with you
+
+You already have years of email, calendar, notes inside Google / Notion / Dropbox. Loamss ships **transitional source connectors** (`source:files`, `source:gmail`, plus capsule ingestors for Calendar, RSS, …) that migrate that data into your Loamss. Once it's in, your apps and AI tools work against it the same as anything native. The long-term shape is apps that write to Loamss in the first place; source connectors are the bridge for users who don't have those apps yet.
 
 ### Walk away whenever you want
 
@@ -50,8 +52,8 @@ If the platform sunsets, your library and analytics are still in your storage. P
 
 | | |
 |---|---|
-| **What goes in** | You connect data sources (Gmail, Calendar, files, anything you choose). Nothing is pulled that you didn't connect. |
-| **Who gets access** | Every consumer — every AI tool, platform, specialist, peer — pairs explicitly and gets scoped capabilities. No background access. |
+| **What goes in** | Your apps write to your Loamss directly; you also choose any data sources to ingest from legacy services. Nothing arrives that you didn't allow. |
+| **Who gets access** | Every consumer — every AI tool, every app, platform, specialist, peer — pairs explicitly and gets scoped capabilities. No background access. |
 | **What scope** | Read this folder. Search emails from this sender. Query memory excluding health. Publish content tagged `public`. You set the lines. |
 | **For how long** | Grants can be time-bound (the clinic gets 2 hours) or open-ended (your daily AI tools stay paired until revoked). |
 | **With what consequences** | Sending email, posting content, transferring money — consequential actions require explicit per-action approval. Reading is one thing; acting is another. |
@@ -64,9 +66,11 @@ If the platform sunsets, your library and analytics are still in your storage. P
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  EXTERNAL CONSUMERS (anything that speaks MCP)              │
-│  AI tools · Platforms · Specialists · Peers · Services · …  │
-│  Paired explicitly. Scoped narrowly. Logged completely.     │
+│  YOUR APPS + TOOLS (anything that speaks MCP)               │
+│  Native apps (Path A) · External AI tools (Path B) ·         │
+│  Platforms · Specialists · Peers · Services                  │
+│  Each pairs explicitly. Each gets scoped capabilities.       │
+│  Each call is logged.                                        │
 └──────────────────────────┬──────────────────────────────────┘
                            │ MCP (paired, scoped, audited)
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -81,32 +85,32 @@ If the platform sunsets, your library and analytics are still in your storage. P
 │         │                              │ sandboxed via MCP  │
 │         │                  ┌───────────▼─────────────────┐   │
 │         │                  │  CAPSULES                   │   │
-│         │                  │  ingest │ organize │        │   │
-│         │                  │  expose │ act              │   │
+│         │                  │  organize · expose · act    │   │
+│         │                  │  (+ transitional ingestors) │   │
 │         │                  └─────────────────────────────┘   │
 └─────────┼────────────────────────────────────────────────────┘
           │
 ┌─────────▼───────────────────────────────────────────────────┐
 │  USER-OWNED RESOURCES                                       │
 │  Storage (FS / SQLite / S3 / GCS / Postgres) │ Identity     │
-│  Compute (laptop / NAS / server)             │ Model keys   │
+│  Compute (laptop / NAS / server / cloud)     │ Model keys   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The middle layer — Loamss — is what this project builds. The top and bottom layers belong to you.
+The middle layer — Loamss — is what this project builds. The top and bottom layers belong to you. Apps write your content INTO the substrate; AI tools read it under scoped grants; capsules sit between, organizing what's there or acting on it.
 
 ---
 
-## Capsules — the extensibility surface
+## Capsules — the extensibility surface inside the substrate
 
 A **capsule** is a packaged unit (TypeScript or Python today; WASM planned) that extends what Loamss can do with your data. Capsules are sandboxed subprocesses, signed, and gated by the same permission framework that gates external consumers — capsules are not trusted. Four roles, defined by what they do:
 
-- **Ingestors** pull data IN from external services (Gmail, Calendar, Drive, Slack, GitHub, RSS, …) into your storage
-- **Organizers** read storage and build memory — entity resolution, summarization, embeddings, classification
+- **Organizers** read storage and build memory — entity resolution, summarization, embeddings, classification. The most common steady-state role.
 - **Exposers** declare new MCP resources and tools for external consumers (e.g., the `content-publisher` capsule that exposes your videos to publishing platforms)
-- **Actuators** take action in the outside world on your behalf — always gated by explicit user approval
+- **Actuators** take action in the outside world on your behalf — always gated by explicit user approval (send email via SMTP, post to social, etc.)
+- **Ingestors** — *transitional*. Pull data IN from legacy services (Gmail, Calendar, Drive, …) into your storage. Useful for migrating historical data; long-term, native apps write into Loamss directly, removing the need.
 
-The catalogue grows in the open marketplace, not in this repo. The two in-tree connectors (`source:files`, `source:gmail`) are SPI reference implementations covering the no-auth and OAuth extremes; everything else (Calendar, Drive, Slack, GitHub, Notion, Linear, …) ships as a capsule under the `ingestor` role.
+The catalogue grows in the open marketplace, not in this repo. The two in-tree connectors (`source:files`, `source:gmail`) are SPI reference implementations covering the no-auth and OAuth extremes; new ingestors ship as capsules under the `ingestor` role.
 
 The full primitive set for capsule ingestors — credential storage, cursor persistence, scheduled triggers, runtime-driven OAuth — landed in the most recent release. Two reference capsules in [`sdk/typescript/examples/`](sdk/typescript/examples/) cover the design spectrum: [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) (no-auth) and [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) (Google OAuth, with the runtime driving the browser flow). Together they demonstrate every primitive end-to-end.
 
@@ -116,11 +120,9 @@ The full primitive set for capsule ingestors — credential storage, cursor pers
 
 Loamss assumes apps that treat user-owned data substrates as first-class. **That ecosystem is new.** Two paths for builders:
 
-**Path A — Native Loamss apps.** Your app is designed around Loamss from day one. The user's Loamss IS the storage layer; your backend is a thin layer that holds essentially nothing about the user's content. Examples: a note-taking app where notes live in the user's memory; a creator platform that streams videos from the user's S3 via signed URLs; a personal AI assistant whose entire context is in the user's substrate. See [`native-apps.md`](native-apps.md) for the pattern, tradeoffs, and worked examples.
+**Path A — Native Loamss apps (the long-term shape).** Your app is designed around Loamss from day one. The user's Loamss IS the storage layer; your backend is a thin layer that holds essentially nothing about the user's content. Examples: an email app where messages live in the user's storage and memory; a note-taking app where notes are entities in the user's memory; a creator platform that streams videos from the user's S3 via signed URLs; a personal AI assistant whose entire context is in the user's substrate. See [`native-apps.md`](native-apps.md) for the pattern, tradeoffs, and worked examples. **This is what the project optimizes for.**
 
-**Path B — Existing apps adding Loamss support.** Your app exists with its own storage and accounts. You add an MCP client so users can optionally pair their Loamss for context. Architecture unchanged; Loamss becomes one of several context sources. See [`mcp-surface.md`](mcp-surface.md).
-
-Path A grows the ecosystem; Path B follows once enough users run Loamss. Today, the most leveraged work is Path A.
+**Path B — Existing apps adding Loamss support.** Your app exists with its own storage and accounts. You add an MCP client so users can optionally pair their Loamss for context. Architecture unchanged; Loamss becomes one of several context sources. See [`docs/connect-your-app.md`](docs/connect-your-app.md). Path B is how the ecosystem warms up — existing AI tools (Claude, ChatGPT, Cursor) reach a user's Loamss via Path B until native Path A alternatives arrive.
 
 ---
 
