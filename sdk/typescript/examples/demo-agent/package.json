@@ -10,6 +10,6 @@
     "write": "bun src/agent.ts --write"
   },
   "dependencies": {
-    "@loamss/sdk": "^0.1.4"
+    "@loamss/sdk": "^0.1.5"
   }
 }

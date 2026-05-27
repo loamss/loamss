@@ -145,19 +145,21 @@ Path A grows the ecosystem; Path B follows once enough users run Loamss. Today, 
 
 ### Capsule ecosystem
 
-- ✅ **TypeScript SDK** ([`@loamss/sdk`](sdk/typescript/)) — `bun add @loamss/sdk` / `npm install @loamss/sdk`. Full MCP-over-stdio capsule surface + Path-B client library, 43 tests
+- ✅ **TypeScript SDK** ([`@loamss/sdk`](sdk/typescript/)) — `bun add @loamss/sdk` / `npm install @loamss/sdk`. Full MCP-over-stdio capsule surface + Path-B client library, 43 tests. Published to npm at [`@loamss/sdk`](https://www.npmjs.com/package/@loamss/sdk) (tracks the runtime release tag).
 - ✅ **Python SDK** ([`loamss_sdk`](sdk/python/)) — mirrors the TS shape, 19 tests
-- ✅ **6 reference capsules** under [`sdk/typescript/examples/`](sdk/typescript/examples/):
+- ✅ **Reference examples** under [`sdk/typescript/examples/`](sdk/typescript/examples/):
 
-  | Capsule | Role | Demonstrates |
+  | Example | Role | Demonstrates |
   |---|---|---|
-  | [`hello-world`](sdk/typescript/examples/hello-world/) | minimal | The smallest possible capsule — one tool, no permissions |
-  | [`daily-brief`](sdk/typescript/examples/daily-brief/) | organizer | Reading memory across threads/entities and calling `model.call` to summarize |
-  | [`approval-demo`](sdk/typescript/examples/approval-demo/) | actuator | The `requires_user_approval` consequential-action gate |
-  | [`inbox-app`](sdk/typescript/examples/inbox-app/) | exposer | Exposing structured resources back to MCP clients |
-  | [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) | ingestor (no-auth) | Scheduled trigger + `cursor.{get,set}` + `memory.upsert` for public feeds |
-  | [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) | ingestor (OAuth) | The full Google OAuth path: `oauth.access_token`, runtime-driven browser flow, transparent refresh |
+  | [`hello-world`](sdk/typescript/examples/hello-world/) | capsule (minimal) | The smallest possible capsule — one tool, no permissions |
+  | [`daily-brief`](sdk/typescript/examples/daily-brief/) | capsule (organizer) | Reading memory across threads/entities and calling `model.call` to summarize |
+  | [`approval-demo`](sdk/typescript/examples/approval-demo/) | capsule (actuator) | The `requires_user_approval` consequential-action gate |
+  | [`inbox-app`](sdk/typescript/examples/inbox-app/) | capsule (exposer) | Exposing structured resources back to MCP clients |
+  | [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) | capsule (ingestor, no-auth) | Scheduled trigger + `cursor.{get,set}` + `memory.upsert` for public feeds |
+  | [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) | capsule (ingestor, OAuth) | The full Google OAuth path: `oauth.access_token`, runtime-driven browser flow, transparent refresh |
+  | [`demo-agent`](sdk/typescript/examples/demo-agent/) | external Path-B agent | An external MCP client with a local Ollama brain. Shows the allowed/denied capability paths end-to-end — the trust contract made visible |
 - ✅ **Capsule ingestor primitives** end-to-end: credentials store, cursor store, scheduled triggers, source-registry bridge, OAuth orchestrator with well-known provider registry (google, github), `oauth.access_token` MCP tool, `/console/oauth/*` HTTP surface
+- ✅ **Auto-embedding on ingest** (v0.1.5) — when an embedding-capable model adapter is configured (Ollama with `nomic-embed-text`, OpenAI `text-embedding-3`, …), the memory layer fills in vectors for any entry that arrives without them. The standard flow `loamss source sync` → `memory.query` works out of the box on a fresh install; no organizer capsule required.
 - ⏳ **Capsule marketplace** (registry MVP + certification pipeline)
 
 ### User-facing
@@ -190,9 +192,9 @@ If you'd rather not use Homebrew:
 ```bash
 # Pick the right tarball for your OS + arch from the latest release.
 # Example: Linux arm64 (Raspberry Pi 4/5, AWS Graviton, …)
-curl -L -O https://github.com/loamss/loamss/releases/latest/download/loamss-v0.1.0-linux-arm64.tar.gz
-tar xzf loamss-v0.1.0-linux-arm64.tar.gz
-./loamss-v0.1.0-linux-arm64/loamss start --open
+curl -L -O https://github.com/loamss/loamss/releases/latest/download/loamss-v0.1.5-linux-arm64.tar.gz
+tar xzf loamss-v0.1.5-linux-arm64.tar.gz
+./loamss-v0.1.5-linux-arm64/loamss start --open
 ```
 
 The runtime has no runtime dependencies — embedded dashboard, static-linked SQLite, etc. — so it just runs.
@@ -216,7 +218,9 @@ Three things to try once you're in:
 
 1. **Add a source.** Sources pane → `+ Add source`, point it at a directory of Markdown (`~/Documents` works), watch the memory layer fill up.
 2. **Install a capsule.** Capsules pane → `+ Install capsule`, paste `sdk/typescript/examples/daily-brief` from the cloned repo. The runtime issues its permission grants and shows the slip.
-3. **Pair an app.** Apps pane → `+ Pair an app`, give it a name, copy the code into any MCP-speaking client (Claude Desktop, your own script via `@loamss/sdk`), watch the Activity feed light up as it reads.
+3. **Pair an external agent.** Apps pane → `+ Pair an app`, then run [`sdk/typescript/examples/demo-agent`](sdk/typescript/examples/demo-agent/) — a small Node script that uses a local Ollama model and asks your memory questions through MCP. Watch the Activity feed log each call as allowed or denied.
+
+The recorded 90-second walkthrough of this flow (substrate → ingest → external agent → audit) lives at [`docs/demo-script-90s.md`](docs/demo-script-90s.md). It's a fresh-machine script — every step is a real command, end-to-end verified.
 
 `loamss export` produces a complete archive of your storage + memory + audit history. Walk away whenever.
 

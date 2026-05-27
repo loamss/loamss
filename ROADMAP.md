@@ -11,9 +11,9 @@ Goal: lock down the contracts before we build anything that depends on them.
 - [x] Permission model v0.1 published (`permission-model.md`)
 - [x] Adapter interface specs: storage, memory, model (`adapter-interface.md`)
 - [x] Audit log schema v0.1 (`audit-spec.md`)
-- [ ] Runtime skeleton in Go: HTTP API, lifecycle, config loading
-- [ ] Dev environment: `make` targets, containerized test backends, CI
-- [ ] CLAUDE.md files in each top-level directory with subsystem context
+- [x] Runtime skeleton in Go: HTTP API, lifecycle, config loading
+- [x] Dev environment: Makefile targets, containerized test backends (pgvector, chroma, qdrant), GitHub Actions CI + release pipeline
+- [x] CLAUDE.md files in each top-level directory with subsystem context
 
 **Stop and validate**: walk three external developers through the specs. Ask them to design a capsule on paper. Note where they get confused.
 
@@ -27,11 +27,14 @@ Goal: one user, one device, one real workflow, end to end.
 - [x] Model adapter: `model:anthropic` (+ bonus `model:ollama` for local inference, plus `model:dummy` / `model:none`)
 - [x] First reference connector: Gmail (`source:gmail`) — proves the Source SPI with a real provider. The SPI is generic; Gmail is the demonstration, not the target.
 - [x] Second reference connector: `source:files` — no-auth path, the frictionless demo. With Gmail, this completes the SPI reference set (no-auth + OAuth). All further data sources ship as capsule ingestors.
-- [ ] Reference capsule: daily briefing ("what's on my plate today")
-- [ ] Reference capsule: email triage ("clear my inbox with my approval per send")
-- [ ] Console: setup wizard, capsule install, permission grants, audit log viewer
+- [x] Reference capsule: daily briefing (`sdk/typescript/examples/daily-brief/`)
+- [x] Auto-embedding on ingest (v0.1.5) — closes the "ingest worked, query returns nothing" gap for the standard flow. The memory layer auto-embeds entries that arrive without vectors when an embedding-capable model adapter is configured.
+- [x] Console: setup wizard (Welcome → Storage → Memory → Models → Connect → Done) + five interactive panes (Sources, Capsules, Apps, Approvals, Activity). Embedded in the runtime binary.
 - [x] CLI: Phase 1 MVP cut shipped (init, doctor, start, status, version, config, capsule, client, grant, audit, approve, export, source)
-- [x] Docs: getting started, building your first capsule — shipped: [docs/setup-gmail.md](docs/setup-gmail.md), [docs/build-your-first-capsule.md](docs/build-your-first-capsule.md), [docs/connect-your-app.md](docs/connect-your-app.md), [sources.md](sources.md)
+- [x] Docs: getting started, building your first capsule — shipped: [docs/setup-gmail.md](docs/setup-gmail.md), [docs/build-your-first-capsule.md](docs/build-your-first-capsule.md), [docs/connect-your-app.md](docs/connect-your-app.md), [sources.md](sources.md), [docs/demo-script-90s.md](docs/demo-script-90s.md)
+- [x] Distribution: Homebrew tap ([`loamss/homebrew-loamss`](https://github.com/loamss/homebrew-loamss)) + npm SDK ([`@loamss/sdk`](https://www.npmjs.com/package/@loamss/sdk)), both auto-published on tag via GitHub Actions
+- [x] External-agent reference (`sdk/typescript/examples/demo-agent/`) — Path-B MCP client with local Ollama brain, demonstrates allowed + denied capability paths end-to-end
+- [ ] Reference capsule: email triage ("clear my inbox with my approval per send")
 
 **Deliverable**: a person can install Loamss on their laptop, ingest their files and Gmail, install two capsules, and use them for a week without us touching it.
 
@@ -47,15 +50,18 @@ Goal: developers can build third-party capsules; users have real choice in backe
 - [ ] Model adapter: `model:mistral`
 - [x] SDKs: TypeScript and Python, with local test harnesses
 - [x] Connector framework + docs so third parties can build their own — see [`docs/build-your-first-source-connector.md`](docs/build-your-first-source-connector.md)
-- [ ] **Capsule ingestor primitives** so connectors can ship outside the runtime tree:
-    - Credential MCP tools (`credentials.set` / `credentials.get`) — capsule-namespaced, runtime-encrypted
+- [x] **Capsule ingestor primitives** so connectors can ship outside the runtime tree:
+    - Credential MCP tools (`credentials.set` / `credentials.get` / `credentials.delete`) — capsule-namespaced, runtime-encrypted
+    - Cursor MCP tools (`cursor.set` / `cursor.get`) — capsule-owned incremental-sync state
     - Scheduled trigger — runtime drives the capsule's sync callback on a cadence
-    - OAuth callback bridge — runtime owns the loopback listener, forwards the auth code to the capsule via MCP
-- [ ] Reference capsule ingestor demonstrating the above (likely a non-OAuth one first, then an OAuth one)
+    - Source-registry bridge — capsule ingestors register as sources visible in `loamss source list` and the console
+    - OAuth callback bridge — runtime owns the loopback listener + PKCE; capsule receives access tokens via `oauth.access_token` MCP tool with transparent refresh
+- [x] Reference capsule ingestors: [`rss-ingestor`](sdk/typescript/examples/rss-ingestor/) (no-auth) + [`calendar-ingestor`](sdk/typescript/examples/calendar-ingestor/) (Google OAuth)
+- [x] Memory: entity resolution + thread derivation in the memory layer; auto-embedding on ingest (v0.1.5)
 - [ ] Capsule registry MVP: API, web UI, signing, versioning
 - [ ] Capsule certification: review pipeline for the canonical registry
 - [ ] Agent host: support for standing tasks ("watch my inbox this week")
-- [ ] Memory: entity resolution, episodic summarization, knowledge graph queries
+- [ ] Memory: episodic summarization, knowledge graph queries
 - [ ] Creator publishing surface: `content.video` (and friends) MCP resource type with signed-URL streaming, `events.write` capability for platform-side metrics/revenue write-back. See `scenarios.md` §5 and §6.
 
 Once the capsule ingestor primitives land, **Calendar, Drive, Slack, GitHub, Notion, Linear, and the rest of the long tail ship as capsules in the marketplace**, not as in-tree code. The two in-tree connectors (`source:files`, `source:gmail`) remain as the SPI reference implementations.
