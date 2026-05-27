@@ -9,7 +9,28 @@ This tutorial walks you through building a **Path-B app** — an external app th
 
 Estimated time: 20 minutes. Prerequisites: Bun ≥ 1.1, a running `loamss` runtime you can connect to (yours or a test instance).
 
-> **Path A vs Path B.** Path-A apps are native to Loamss — the user's Loamss IS the storage; the app's backend holds essentially nothing about the user's content. Path-B apps already exist with their own storage and accounts; they add Loamss as an *additional* context source. This tutorial covers Path B because it's the easier entry point for builders with an existing app. The same SDK supports Path A; the API surface is identical.
+> **Path A vs Path B — which one is right for you?**
+>
+> **Path A (native Loamss app — the design center):** your app is
+> built around Loamss from day one. The user's Loamss IS your storage
+> layer; your backend holds essentially nothing about the user's
+> content. This is what the project optimizes for — an email app, a
+> notes app, a calendar app, a creator platform, a personal AI
+> assistant. See [`../native-apps.md`](../native-apps.md) for the
+> architectural pattern and worked examples. **If you're building a
+> new product, start there.**
+>
+> **Path B (this tutorial — pragmatic for existing apps):** your app
+> already exists with its own storage and accounts. You add Loamss as
+> an *additional* context source so users can optionally pair it.
+> Architecture unchanged. Lower lift, narrower payoff. This is how
+> the ecosystem warms up — Claude Desktop, ChatGPT, Cursor are all
+> Path B integrations today.
+>
+> The SDK surface is identical for both paths; what differs is whose
+> database your data lives in. This tutorial walks Path B because
+> it's the simpler entry point. When you're ready for Path A, the
+> same `@loamss/sdk` carries forward.
 
 ## Part 1 — Pair once
 

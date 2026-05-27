@@ -1,8 +1,14 @@
-# Building Native Loamss Apps v0.1 (draft)
+# Building Native Loamss Apps
 
-This document is for developers considering an application where **Loamss is the backing data store from the start** — not an integration added later, but the substrate the app is designed around. It complements `mcp-surface.md`, which describes the protocol; this doc covers the design pattern.
+This document is for developers building an application where **Loamss is the backing data store from the start** — not an integration added later, but the substrate the app is designed around. It complements `mcp-surface.md`, which describes the wire protocol; this doc covers the design pattern.
 
-> **Status: draft.** Patterns and examples will evolve as native apps actually ship. This is forward-looking guidance, not a settled cookbook.
+> **Status: this is the design center.** Loamss exists primarily to be
+> the substrate Path A native apps are built on. Other reading
+> orders (capsule authors, Path B integrators, source-connector
+> writers) all branch off this thesis — see `README.md`,
+> `CLAUDE.md`, and `ROADMAP.md` for the lineage. Patterns and
+> examples here will keep evolving as native apps ship, but the
+> overall shape is settled.
 
 ## What this document is and is not
 

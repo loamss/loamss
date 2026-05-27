@@ -46,7 +46,11 @@ brew services start ollama         # or `ollama serve` in a shell
 ollama pull nomic-embed-text       # 274 MB — Loamss uses this for embedding
 ollama pull llama3.2:1b            # 1.3 GB — the agent's brain
 
-# 3. At least one source ingested so memory.query returns hits
+# 3. Some content in memory so memory.query returns hits.
+# The agent has memory.write granted via the same flow below, so
+# you can also just run it once in --write mode to seed entries.
+# If you have legacy notes already, the transitional files
+# connector is a quick way to get them in:
 loamss source add source:files --name notes \
   --config root=/path/to/your/notes \
   --config namespace=notes
