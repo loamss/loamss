@@ -75,14 +75,15 @@ type SubjectKind string
 
 // Standard subject kinds. Per audit-spec.md §Universal entry schema.
 const (
-	SubjectGrant    SubjectKind = "grant"
-	SubjectResource SubjectKind = "resource"
-	SubjectMemory   SubjectKind = "memory"
-	SubjectTool     SubjectKind = "tool"
-	SubjectCapsule  SubjectKind = "capsule"
-	SubjectClient   SubjectKind = "client"
-	SubjectSource   SubjectKind = "source"
-	SubjectConfig   SubjectKind = "config"
+	SubjectGrant      SubjectKind = "grant"
+	SubjectResource   SubjectKind = "resource"
+	SubjectMemory     SubjectKind = "memory"
+	SubjectTool       SubjectKind = "tool"
+	SubjectCapsule    SubjectKind = "capsule"
+	SubjectClient     SubjectKind = "client"
+	SubjectSource     SubjectKind = "source"
+	SubjectConfig     SubjectKind = "config"
+	SubjectSetupToken SubjectKind = "setup_token"
 )
 
 // Outcome is the result of the event.

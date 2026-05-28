@@ -362,6 +362,90 @@ func TestSetupTokenGate_PairedClientFallthrough(t *testing.T) {
 	}
 }
 
+// TestSetupTokenGate_ConsumeReturnsFirstCallExactlyOnce locks in the
+// concurrency contract handleConsoleInit relies on for single-shot
+// audit emission. Hammer Consume from 50 goroutines; exactly one
+// must report firstCall=true.
+func TestSetupTokenGate_ConsumeReturnsFirstCallExactlyOnce(t *testing.T) {
+	token, _ := GenerateSetupToken()
+	dir := t.TempDir()
+	gate, err := NewSetupTokenGate(SetupTokenOptions{
+		Token:        token,
+		ConsumedPath: filepath.Join(dir, ".setup-consumed"),
+		Engine:       &permission.Engine{}, // not used by Consume
+	})
+	if err != nil {
+		t.Fatalf("NewSetupTokenGate: %v", err)
+	}
+
+	const N = 50
+	results := make(chan bool, N)
+	start := make(chan struct{})
+	for i := 0; i < N; i++ {
+		go func() {
+			<-start
+			first, _ := gate.Consume()
+			results <- first
+		}()
+	}
+	close(start)
+	firstCount := 0
+	for i := 0; i < N; i++ {
+		if <-results {
+			firstCount++
+		}
+	}
+	if firstCount != 1 {
+		t.Errorf("expected exactly 1 firstCall=true across %d concurrent Consumes, got %d", N, firstCount)
+	}
+}
+
+// TestSetupTokenGate_ConsumeEmitsAuditEntry confirms the
+// /console/init success path writes the setup_token.consumed audit
+// entry exactly once and with the right shape.
+func TestSetupTokenGate_ConsumeEmitsAuditEntry(t *testing.T) {
+	f := newGatedFixture(t)
+
+	resp := f.postInit(t, "Bearer "+f.token)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("init: status %d, want 200", resp.StatusCode)
+	}
+
+	entries, err := f.auditWriter.Query(context.Background(), audit.Filter{
+		Types: []string{"setup_token.consumed"},
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 setup_token.consumed entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Outcome != audit.OutcomeSuccess {
+		t.Errorf("outcome = %q, want success", e.Outcome)
+	}
+	if e.Subject == nil || e.Subject.Kind != audit.SubjectSetupToken {
+		t.Errorf("subject = %+v, want kind=setup_token", e.Subject)
+	}
+	if e.Data["origin"] != "test" {
+		t.Errorf("data.origin = %q, want \"test\"", e.Data["origin"])
+	}
+
+	// Re-init under the now-consumed token must 401 AND must not
+	// write a second consumed audit entry — the gate is gone.
+	resp2 := f.postInit(t, "Bearer "+f.token)
+	resp2.Body.Close()
+	entries2, _ := f.auditWriter.Query(context.Background(), audit.Filter{
+		Types: []string{"setup_token.consumed"},
+		Limit: 10,
+	})
+	if len(entries2) != 1 {
+		t.Errorf("after rejected re-init, expected still 1 entry, got %d", len(entries2))
+	}
+}
+
 func TestSetupTokenGate_GenerateProducesHighEntropy(t *testing.T) {
 	// Two consecutive generates must produce different tokens, both
 	// hex-encoded 64 chars (32 bytes).

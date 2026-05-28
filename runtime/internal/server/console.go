@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
 )
 
@@ -192,12 +193,38 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 	// in-memory flip already happened, and the next /console/init
 	// attempt under this process will be rejected regardless. The
 	// only thing the sentinel buys us is restart-safety.
+	//
+	// Audit: emit setup_token.consumed exactly once across concurrent
+	// init attempts. Consume returns firstCall=true only on the call
+	// that actually flipped the atomic state, so two simultaneous
+	// /console/init requests both succeed at writing config but only
+	// one writes the audit row. The principal in the request context,
+	// when present, is the paired-client that completed init —
+	// recorded as the actor. When the consumer used the raw setup
+	// token, no principal exists and we record actor=system.
 	if s.setupToken != nil {
-		if err := s.setupToken.Consume(); err != nil {
+		firstCall, err := s.setupToken.Consume()
+		if err != nil {
 			s.logger.Warn("console init: persisting setup-token consumption failed",
 				"err", err,
 				"hint", "in-memory state is correct; on restart the gate would re-open until /console/init is rerun",
 			)
+		}
+		if firstCall && s.audit != nil {
+			actor := audit.Actor{Kind: audit.ActorSystem, ID: "setup-token"}
+			if p := PrincipalFromContext(r.Context()); p != nil {
+				actor = audit.Actor{Kind: audit.ActorKind(p.Kind), ID: p.ID}
+			}
+			_, _ = s.audit.Append(r.Context(), audit.Entry{
+				Type:    "setup_token.consumed",
+				Actor:   actor,
+				Subject: &audit.Subject{Kind: audit.SubjectSetupToken, ID: "active"},
+				Outcome: audit.OutcomeSuccess,
+				Data: map[string]any{
+					"origin":      s.setupToken.Origin(),
+					"config_path": target,
+				},
+			})
 		}
 	}
 

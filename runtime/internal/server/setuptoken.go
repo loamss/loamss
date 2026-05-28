@@ -166,22 +166,25 @@ func (g *SetupTokenGate) Origin() string {
 }
 
 // Consume marks the setup token as spent and writes the persistence
-// sentinel. Idempotent — repeated calls are safe. Designed to be
-// called from the /console/init success path inside handleConsoleInit.
+// sentinel. Returns (true, nil) on the call that actually flipped the
+// state and (false, nil) on subsequent calls — atomic, so callers can
+// rely on exactly one (firstCall=true) result across concurrent
+// invocations. Used by /console/init success path to emit the
+// audit-trail event exactly once.
 //
 // Errors writing the sentinel are returned but the in-memory state
 // is still flipped — losing the sentinel only means a restart would
 // re-open the gate, which is a strictly less-bad failure mode than
 // leaving the gate open for the rest of this process lifetime.
-func (g *SetupTokenGate) Consume() error {
+func (g *SetupTokenGate) Consume() (firstCall bool, err error) {
 	if g == nil {
-		return nil
+		return false, nil
 	}
 	if !g.consumed.CompareAndSwap(false, true) {
-		return nil
+		return false, nil
 	}
 	if g.consumedPath == "" {
-		return nil
+		return true, nil
 	}
 	// Best-effort: ensure parent dir exists. start.go always creates
 	// data_dir, but tests with ad-hoc paths may not.
@@ -189,9 +192,9 @@ func (g *SetupTokenGate) Consume() error {
 	// File contents are not security-relevant — its existence is the
 	// signal. A short marker helps humans grepping the data_dir.
 	if err := os.WriteFile(g.consumedPath, []byte("consumed\n"), 0o600); err != nil {
-		return fmt.Errorf("setup token: writing consumed sentinel: %w", err)
+		return true, fmt.Errorf("setup token: writing consumed sentinel: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // matches reports whether the provided token equals the active token

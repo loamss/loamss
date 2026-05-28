@@ -385,7 +385,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// LOAMSS_SETUP_TOKEN is set explicitly (operator pre-generated
 	// the token). Inactive in local profile with no explicit token
 	// — laptop installs keep the historical localhost-only contract.
-	setupGate, err := resolveSetupTokenGate(det.Profile, cfg.Runtime.DataDir, engine, logger)
+	setupGate, err := resolveSetupTokenGate(ctx, det.Profile, cfg.Runtime.DataDir, engine, auditWriter, logger)
 	if err != nil {
 		return fmt.Errorf("resolving setup token: %w", err)
 	}

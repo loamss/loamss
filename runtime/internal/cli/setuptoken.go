@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/profile"
 	"github.com/loamss/loamss/runtime/internal/server"
@@ -43,9 +45,11 @@ const setupConsumedFilename = ".setup-consumed"
 // the operator can grab it from Cloud Run / Fly logs. On the env-var
 // path the token is NEVER logged (the operator already has it).
 func resolveSetupTokenGate(
+	ctx context.Context,
 	prof profile.Profile,
 	dataDir string,
 	engine *permission.Engine,
+	auditWriter audit.Writer,
 	logger *slog.Logger,
 ) (*server.SetupTokenGate, error) {
 	envToken := os.Getenv(envSetupToken)
@@ -113,6 +117,37 @@ func resolveSetupTokenGate(
 		// in the Cloud Run / Fly log UI. The token is high entropy and
 		// not sensitive to log retention beyond the first /console/init.
 		fmt.Fprintf(os.Stderr, "\n  ↪  Setup token: %s\n     Provide it as Authorization: Bearer <token> on the first /console/init request.\n     The token is single-use; subsequent access requires a paired-client credential.\n\n", token)
+	}
+
+	// Audit: record that an active setup-token gate is now in place.
+	// This is the verifiable handshake the trust audit relies on —
+	// the chain-tip after a clean cloud deploy must include exactly
+	// one setup_token.issued entry, followed eventually by exactly
+	// one setup_token.consumed entry. The token value is NEVER
+	// included; only its origin and the data_dir it gates.
+	//
+	// Best-effort: append errors are logged but don't fail startup.
+	// The gate is already correctly configured at this point; losing
+	// the audit row only loses the trust trail, not the security
+	// boundary.
+	if auditWriter != nil {
+		_, err := auditWriter.Append(ctx, audit.Entry{
+			Type:    "setup_token.issued",
+			Actor:   audit.Actor{Kind: audit.ActorRuntime, ID: "loamss"},
+			Subject: &audit.Subject{Kind: audit.SubjectSetupToken, ID: "active"},
+			Outcome: audit.OutcomeSuccess,
+			Data: map[string]any{
+				"origin":   origin,
+				"profile":  string(prof),
+				"data_dir": dataDir,
+			},
+		})
+		if err != nil {
+			logger.Warn("setup token: appending issuance audit entry failed",
+				"err", err,
+				"hint", "gate is in place; only the audit trail is missing",
+			)
+		}
 	}
 	return gate, nil
 }
