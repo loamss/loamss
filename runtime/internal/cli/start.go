@@ -29,7 +29,6 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/fsencrypted" // registers storage:fs-encrypted
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/gcs"         // registers storage:gcs
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/s3"          // registers storage:s3
-	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/mcp"
@@ -135,7 +134,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	auditWriter, err := audit.OpenSQLite(ctx, filepath.Join(cfg.Runtime.DataDir, "audit.db"))
+	auditWriter, err := openAuditWriter(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("opening audit log: %w", err)
 	}

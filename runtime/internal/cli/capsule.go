@@ -479,7 +479,7 @@ func openCapsuleDeps(cmd *cobra.Command) (*capsuleDeps, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	w, err := audit.OpenSQLite(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "audit.db"))
+	w, err := openAuditWriter(cmd.Context(), cfg)
 	if err != nil {
 		_ = permStore.Close()
 		_ = capStore.Close()

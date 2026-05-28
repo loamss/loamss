@@ -23,14 +23,16 @@ func auditDBPath(cfg *config.Config) string {
 	return filepath.Join(cfg.Runtime.DataDir, "audit.db")
 }
 
-// openAuditWriter constructs an audit.SQLite Writer bound to the
-// config-derived path. Caller is responsible for Close.
-func openAuditWriter(cmd *cobra.Command) (*audit.SQLite, error) {
+// openAuditWriterForCmd is the cobra-bridge convenience that reads
+// the resolved config from cmd's context and delegates to
+// openAuditWriter (defined in database.go) for the actual driver
+// resolution. Caller is responsible for Close.
+func openAuditWriterForCmd(cmd *cobra.Command) (*audit.Store, error) {
 	cfg := config.From(cmd.Context())
 	if cfg == nil {
 		return nil, errors.New("no config attached to context (programming error in CLI wiring)")
 	}
-	w, err := audit.OpenSQLite(cmd.Context(), auditDBPath(cfg))
+	w, err := openAuditWriter(cmd.Context(), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("opening audit log: %w", err)
 	}
@@ -69,7 +71,7 @@ streaming (tail -f semantics) arrives with the daemon's subscription
 mechanism in a future release.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		w, err := openAuditWriter(cmd)
+		w, err := openAuditWriterForCmd(cmd)
 		if err != nil {
 			return err
 		}
@@ -113,7 +115,7 @@ var auditLogCmd = &cobra.Command{
 	Short: "Query audit entries with filters",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		w, err := openAuditWriter(cmd)
+		w, err := openAuditWriterForCmd(cmd)
 		if err != nil {
 			return err
 		}
@@ -188,7 +190,7 @@ between runtime sessions, or to debug a writer bug. See audit-spec.md
 §Tamper-evidence for the algorithm.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		w, err := openAuditWriter(cmd)
+		w, err := openAuditWriterForCmd(cmd)
 		if err != nil {
 			return err
 		}
@@ -233,7 +235,7 @@ The output is the canonical Entry shape — exactly what re-importing
 into another runtime expects.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		w, err := openAuditWriter(cmd)
+		w, err := openAuditWriterForCmd(cmd)
 		if err != nil {
 			return err
 		}

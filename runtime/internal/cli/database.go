@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/database"
 )
@@ -42,6 +43,33 @@ func openRuntimeDB(ctx context.Context, cfg *config.Config) (*database.Database,
 		return database.OpenSQLite(ctx, path)
 	default:
 		return nil, fmt.Errorf("unknown runtime database adapter %q (want %q or %q)", adapter, "sqlite", "postgres")
+	}
+}
+
+// openAuditWriter returns the *audit.Store the CLI subcommand or
+// daemon should write to. Resolution mirrors openRuntimeDB but
+// targets cfg.Runtime.AuditDatabase + LOAMSS_AUDIT_DATABASE_URL.
+//
+// Defaults to SQLite at <data_dir>/audit.db so the audit log gets
+// its own write lock and isn't contending with the runtime.db
+// writers.
+func openAuditWriter(ctx context.Context, cfg *config.Config) (*audit.Store, error) {
+	adapter := cfg.Runtime.AuditDatabase.Adapter
+	dsn := cfg.Runtime.AuditDatabase.DSN
+	switch adapter {
+	case "postgres":
+		if dsn == "" {
+			return nil, fmt.Errorf("audit database adapter is %q but DSN is empty (set runtime.audit_database.dsn in config or LOAMSS_AUDIT_DATABASE_URL env)", adapter)
+		}
+		return audit.OpenPostgres(ctx, dsn)
+	case "", "sqlite":
+		path := dsn
+		if path == "" {
+			path = filepath.Join(cfg.Runtime.DataDir, "audit.db")
+		}
+		return audit.OpenSQLite(ctx, path)
+	default:
+		return nil, fmt.Errorf("unknown audit database adapter %q (want %q or %q)", adapter, "sqlite", "postgres")
 	}
 }
 

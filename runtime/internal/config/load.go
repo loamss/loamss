@@ -34,7 +34,8 @@ const (
 	envDatabaseURL = "LOAMSS_DATABASE_URL"
 	// envDatabaseURLAlt is the conventional Cloud Run / Heroku /
 	// Render env var. Checked only when LOAMSS_DATABASE_URL is unset.
-	envDatabaseURLAlt = "DATABASE_URL"
+	envDatabaseURLAlt   = "DATABASE_URL"
+	envAuditDatabaseURL = "LOAMSS_AUDIT_DATABASE_URL"
 )
 
 // Load resolves a Config from the given file path, environment, and defaults.
@@ -133,6 +134,13 @@ func applyEnv(cfg *Config) {
 	} else if v := os.Getenv(envDatabaseURLAlt); v != "" {
 		cfg.Runtime.Database.Adapter = "postgres"
 		cfg.Runtime.Database.DSN = v
+	}
+	// LOAMSS_AUDIT_DATABASE_URL is the audit-specific override.
+	// No DATABASE_URL fallback for audit — the operator opts in
+	// explicitly. Implies adapter=postgres.
+	if v := os.Getenv(envAuditDatabaseURL); v != "" {
+		cfg.Runtime.AuditDatabase.Adapter = "postgres"
+		cfg.Runtime.AuditDatabase.DSN = v
 	}
 }
 

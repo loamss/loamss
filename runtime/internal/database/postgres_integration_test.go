@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/memory"
@@ -171,6 +173,140 @@ func TestIntegration_OAuth_MigratesAndQueriesCleanly(t *testing.T) {
 }
 
 // --- end-to-end roundtrip ---------------------------------------------
+
+func TestIntegration_Audit_MigratesAndQueriesCleanly(t *testing.T) {
+	db := openPg(t)
+	store, err := audit.OpenWith(context.Background(), db)
+	if err != nil {
+		t.Fatalf("audit.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
+
+	// Empty store → Latest returns nil, no error.
+	latest, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if latest != nil {
+		t.Errorf("expected nil latest entry on empty store, got %+v", latest)
+	}
+
+	// Empty chain → Verify reports valid with 0 entries checked.
+	r, err := store.Verify(context.Background())
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !r.Valid {
+		t.Errorf("expected empty chain to be valid, got %+v", r)
+	}
+	if r.EntriesChecked != 0 {
+		t.Errorf("expected 0 entries checked, got %d", r.EntriesChecked)
+	}
+}
+
+// TestIntegration_Audit_AppendVerifyRoundtrip exercises the Postgres
+// append path: pg_advisory_xact_lock serialization, rebinding of ?
+// placeholders, and hash-chain integrity across multiple entries.
+func TestIntegration_Audit_AppendVerifyRoundtrip(t *testing.T) {
+	db := openPg(t)
+	store, err := audit.OpenWith(context.Background(), db)
+	if err != nil {
+		t.Fatalf("audit.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
+
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		e := audit.Entry{
+			Type:    "test.event",
+			Actor:   audit.Actor{Kind: audit.ActorRuntime, ID: "test"},
+			Outcome: audit.OutcomeSuccess,
+			Data:    map[string]any{"i": i},
+		}
+		got, err := store.Append(ctx, e)
+		if err != nil {
+			t.Fatalf("Append #%d: %v", i, err)
+		}
+		if got.ID == "" {
+			t.Errorf("entry #%d: expected non-empty ID", i)
+		}
+		if got.Hash == "" {
+			t.Errorf("entry #%d: expected non-empty Hash", i)
+		}
+	}
+
+	entries, err := store.Query(ctx, audit.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(entries) != 5 {
+		t.Errorf("expected 5 entries, got %d", len(entries))
+	}
+
+	r, err := store.Verify(ctx)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !r.Valid {
+		t.Errorf("chain broken after Append: %+v", r)
+	}
+	if r.EntriesChecked != 5 {
+		t.Errorf("expected 5 entries checked, got %d", r.EntriesChecked)
+	}
+}
+
+// TestIntegration_Audit_ConcurrentAppendsChainIntact stresses
+// pg_advisory_xact_lock by hammering the Append path from many
+// goroutines. The chain must remain consistent: every prev_hash
+// references the prior entry, every hash recomputes.
+func TestIntegration_Audit_ConcurrentAppendsChainIntact(t *testing.T) {
+	db := openPg(t)
+	store, err := audit.OpenWith(context.Background(), db)
+	if err != nil {
+		t.Fatalf("audit.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
+
+	ctx := context.Background()
+	const N = 30
+
+	errs := make(chan error, N)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := store.Append(ctx, audit.Entry{
+				Type:    "test.concurrent",
+				Actor:   audit.Actor{Kind: audit.ActorRuntime, ID: "test"},
+				Outcome: audit.OutcomeSuccess,
+				Data:    map[string]any{"i": i},
+			})
+			errs <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Append: %v", err)
+		}
+	}
+
+	r, err := store.Verify(ctx)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !r.Valid {
+		t.Fatalf("concurrent appends broke the chain: %+v", r)
+	}
+	if r.EntriesChecked != N {
+		t.Errorf("expected %d entries checked, got %d", N, r.EntriesChecked)
+	}
+}
 
 // TestIntegration_OAuth_ClientRoundtrip is a small but real query
 // exercise — write a row, read it back, verify the rebound

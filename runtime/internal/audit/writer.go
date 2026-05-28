@@ -7,15 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	_ "modernc.org/sqlite"
+
+	"github.com/loamss/loamss/runtime/internal/database"
 )
 
 // Writer is the audit log append + query surface. SQLite-backed for
@@ -62,13 +61,20 @@ type Filter struct {
 	Reverse bool
 }
 
-// SQLite is the hot-store Writer implementation backed by a
-// SQLite database. Embeddable so other writers can compose it
-// (e.g., a future writer that fans out to a cold-store rotator
-// after appending here).
-type SQLite struct {
+// Store is the hot-store Writer implementation. Backed by either
+// SQLite (laptop install) or Postgres (cloud deploy); branches
+// on the underlying driver for the hash-chain serialization
+// primitive — BEGIN IMMEDIATE on SQLite, pg_advisory_xact_lock
+// on Postgres.
+//
+// Embeddable so other writers can compose it (e.g., a future
+// writer that fans out to a cold-store rotator after appending
+// here).
+type Store struct {
 	mu       sync.Mutex
-	db       *sql.DB
+	db       *database.DB       // wraps *sql.DB; rebinds ? → $N for postgres
+	dbMeta   *database.Database // owning handle when ownsDB; borrowed when not
+	ownsDB   bool
 	path     string
 	lastHash string
 	// lastID is the highest id we've observed in the database. Loaded
@@ -82,45 +88,76 @@ type SQLite struct {
 	ulidEnt *ulid.MonotonicEntropy
 }
 
-// OpenSQLite constructs and initializes a SQLite-backed Writer.
+// SQLite is the historical alias for Store. Retained so existing
+// callers that hold *audit.SQLite keep compiling; will be removed
+// once those callers migrate.
+//
+// Deprecated: use Store.
+type SQLite = Store
+
+// OpenSQLite opens an audit Store backed by a SQLite file. Convenience
+// wrapper around OpenWith for the most common single-driver case.
 //
 // The path is the on-disk audit database file. Its parent directory
 // is created (0700) if needed. The schema is applied idempotently;
 // repeated opens of the same path resume the chain at the existing
 // head.
-func OpenSQLite(ctx context.Context, path string) (*SQLite, error) {
-	abs, err := filepath.Abs(path)
+func OpenSQLite(ctx context.Context, path string) (*Store, error) {
+	db, err := database.OpenSQLite(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("audit: resolving path %q: %w", path, err)
+		return nil, fmt.Errorf("audit: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return nil, fmt.Errorf("audit: creating parent dir: %w", err)
-	}
-
-	dsn := "file:" + abs + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	s, err := openWith(ctx, db, true)
 	if err != nil {
-		return nil, fmt.Errorf("audit: opening database: %w", err)
-	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("audit: pinging database: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("audit: applying schema: %w", err)
-	}
-
-	w := &SQLite{
-		db:      db,
-		path:    abs,
-		ulidEnt: ulid.Monotonic(rand.Reader, 0),
-	}
-	if err := w.loadHeadHash(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	return w, nil
+	return s, nil
+}
+
+// OpenPostgres opens an audit Store backed by a Postgres database
+// at the given DSN. Schema is applied idempotently on first open.
+func OpenPostgres(ctx context.Context, dsn string) (*Store, error) {
+	db, err := database.OpenPostgres(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+	s, err := openWith(ctx, db, true)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenWith opens an audit Store on top of an already-open Database.
+// The caller retains ownership; Close on the returned Store does
+// not close the database.
+func OpenWith(ctx context.Context, db *database.Database) (*Store, error) {
+	return openWith(ctx, db, false)
+}
+
+func openWith(ctx context.Context, db *database.Database, ownsDB bool) (*Store, error) {
+	if db == nil || db.Conn() == nil {
+		return nil, errors.New("audit: OpenWith requires a non-nil Database")
+	}
+	// Schema is dialect-portable for our column set (TEXT everywhere,
+	// no autoincrement, no booleans). Both drivers accept the same
+	// CREATE TABLE statements.
+	if _, err := db.Conn().ExecContext(ctx, schemaSQL); err != nil {
+		return nil, fmt.Errorf("audit: applying schema: %w", err)
+	}
+	s := &Store{
+		db:      db.Conn(),
+		dbMeta:  db,
+		ownsDB:  ownsDB,
+		path:    db.DSN(),
+		ulidEnt: ulid.Monotonic(rand.Reader, 0),
+	}
+	if err := s.loadHeadHash(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 const schemaSQL = `
@@ -145,7 +182,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_actor     ON audit_entries(actor_kind, acto
 CREATE INDEX IF NOT EXISTS idx_audit_outcome   ON audit_entries(outcome);
 `
 
-func (w *SQLite) loadHeadHash(ctx context.Context) error {
+func (w *Store) loadHeadHash(ctx context.Context) error {
 	var (
 		h  sql.NullString
 		id sql.NullString
@@ -179,37 +216,48 @@ func (w *SQLite) loadHeadHash(ctx context.Context) error {
 // Returns the fully-populated Entry on success.
 //
 // Concurrency: Append must serialize across processes because the
-// prev_hash field couples each row to the prior row's hash. The
-// pattern is read-then-write — read the current head hash, compute
-// the new hash from it, INSERT. In-process serialization via w.mu
-// is necessary but not sufficient: two daemons (or a daemon + a CLI
-// invocation) writing to the same audit.db are separate processes
-// with separate mutexes.
+// prev_hash field couples each row to the prior row's hash. Two
+// driver-specific serialization primitives:
 //
-// The fix is a SQLite write-lock-protected read-then-write. We
-// acquire a dedicated connection from the pool, issue
-// `BEGIN IMMEDIATE`, re-read the head hash from the DB, INSERT, and
-// COMMIT. BEGIN IMMEDIATE acquires SQLite's reserved (write) lock
-// at the start of the transaction; concurrent IMMEDIATE writers
-// queue on it (busy_timeout=5s handles brief contention). The
-// in-memory w.lastHash is updated for read-side queries but is no
-// longer authoritative on the write path.
+//   - SQLite: BEGIN IMMEDIATE on a dedicated connection. Acquires
+//     the reserved write lock for the transaction; concurrent
+//     writers queue on it (busy_timeout=5s handles brief contention).
 //
-// Verified by TestAppend_ConcurrentWritersChainIntact, which spawns
-// 50 concurrent appends across goroutines and asserts the chain
-// verifies end-to-end.
-func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
+//   - Postgres: pg_advisory_xact_lock with a fixed key. Released
+//     automatically on COMMIT/ROLLBACK. Doesn't lock the table —
+//     read queries are unaffected.
+//
+// Both paths re-read the authoritative head (id + hash) inside the
+// locked transaction, so w.lastHash / w.lastID are never
+// authoritative on the write path — they're only fast-path caches.
+//
+// Verified by TestAppend_ConcurrentWritersChainIntact (SQLite, 50
+// concurrent goroutines) and by the Postgres integration suite in
+// internal/database.
+func (w *Store) Append(ctx context.Context, e Entry) (*Entry, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
 
 	// Hold the in-process mutex to serialize with our own goroutines
-	// before contending for SQLite's write lock — saves wasted lock
-	// trips when many goroutines append in the same process.
+	// before contending for the database-level write lock — saves
+	// wasted lock trips when many goroutines append in the same
+	// process.
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	conn, err := w.db.Conn(ctx)
+	if w.db.Driver() == database.DriverPostgres {
+		return w.appendPostgres(ctx, e)
+	}
+	return w.appendSQLite(ctx, e)
+}
+
+// appendSQLite uses BEGIN IMMEDIATE on a dedicated connection. The
+// dedicated connection is required because BEGIN IMMEDIATE is a
+// session-level state — running it via the pool would not bind the
+// commit to the same connection.
+func (w *Store) appendSQLite(ctx context.Context, e Entry) (*Entry, error) {
+	conn, err := w.db.Raw().Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("audit: getting connection: %w", err)
 	}
@@ -225,21 +273,86 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 		}
 	}()
 
-	// Re-read the authoritative head (id + hash) inside the write-
-	// locked transaction. Concurrent writers cannot have changed it
-	// underneath us because BEGIN IMMEDIATE blocks them. Refreshing
-	// lastID here is what prevents the "two processes share the
-	// same millisecond, second writer generates a smaller ULID"
-	// failure — nextID below uses lastID as its lower bound.
+	prevHash, err := w.readHeadInSQLiteTx(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	e.PrevHash = prevHash
+
+	if err := w.populateAndInsert(&e, func(query string, args ...any) error {
+		_, err := conn.ExecContext(ctx, query, args...)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("audit: commit: %w", err)
+	}
+	committed = true
+
+	w.lastHash = e.Hash
+	return &e, nil
+}
+
+// auditAdvisoryLockKey is the fixed pg_advisory_xact_lock argument
+// used for cross-process Append serialization on Postgres. The
+// value is the ASCII-encoded bytes of "loamsaud", chosen so that
+// `pg_locks` queries surface it with a recognizable identifier.
+const auditAdvisoryLockKey = int64(0x6C6F616D73617564) // 'loamsaud'
+
+// appendPostgres uses BeginTx + pg_advisory_xact_lock for the
+// cross-process serialization that SQLite gets from BEGIN IMMEDIATE.
+func (w *Store) appendPostgres(ctx context.Context, e Entry) (*Entry, error) {
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("audit: begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(?)", auditAdvisoryLockKey); err != nil {
+		return nil, fmt.Errorf("audit: acquiring advisory lock: %w", err)
+	}
+
+	prevHash, err := w.readHeadInPgTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	e.PrevHash = prevHash
+
+	if err := w.populateAndInsert(&e, func(query string, args ...any) error {
+		_, err := tx.ExecContext(ctx, query, args...)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("audit: commit: %w", err)
+	}
+	committed = true
+
+	w.lastHash = e.Hash
+	return &e, nil
+}
+
+// readHeadInSQLiteTx reads the authoritative head row (id + hash)
+// inside the supplied SQLite connection's transaction.
+func (w *Store) readHeadInSQLiteTx(ctx context.Context, conn *sql.Conn) (string, error) {
 	var (
 		headHash sql.NullString
 		headID   sql.NullString
 	)
-	err = conn.QueryRowContext(ctx,
+	err := conn.QueryRowContext(ctx,
 		`SELECT id, hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
 	).Scan(&headID, &headHash)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("audit: reading head in tx: %w", err)
+		return "", fmt.Errorf("audit: reading head in tx: %w", err)
 	}
 	prevHash := GenesisHash
 	if headHash.Valid && headHash.String != "" {
@@ -248,29 +361,58 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 	if headID.Valid && headID.String > w.lastID {
 		w.lastID = headID.String
 	}
+	return prevHash, nil
+}
 
+// readHeadInPgTx is the Postgres variant — same semantics; uses the
+// database.Tx wrapper so the ? placeholder rebinds for pgx.
+func (w *Store) readHeadInPgTx(ctx context.Context, tx *database.Tx) (string, error) {
+	var (
+		headHash sql.NullString
+		headID   sql.NullString
+	)
+	err := tx.QueryRowContext(ctx,
+		`SELECT id, hash FROM audit_entries ORDER BY id DESC LIMIT 1`,
+	).Scan(&headID, &headHash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("audit: reading head in tx: %w", err)
+	}
+	prevHash := GenesisHash
+	if headHash.Valid && headHash.String != "" {
+		prevHash = headHash.String
+	}
+	if headID.Valid && headID.String > w.lastID {
+		w.lastID = headID.String
+	}
+	return prevHash, nil
+}
+
+// populateAndInsert finishes constructing the Entry (id, timestamp,
+// hash) and INSERTs it via the supplied run function. Shared by both
+// driver paths — the only difference between SQLite and Postgres is
+// the connection/transaction the run runs on.
+func (w *Store) populateAndInsert(e *Entry, runInsert func(query string, args ...any) error) error {
 	now := time.Now().UTC()
 	id, err := w.nextID(now)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	e.ID = id
 	e.Timestamp = now
-	e.PrevHash = prevHash
 
-	hash, err := computeHash(e.PrevHash, e)
+	hash, err := computeHash(e.PrevHash, *e)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	e.Hash = hash
 
 	dataJSON, err := marshalNullableJSON(e.Data)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	contextJSON, err := marshalNullableJSON(e.Context)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var subjKind, subjID sql.NullString
 	if e.Subject != nil {
@@ -278,7 +420,7 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 		subjID = sql.NullString{String: e.Subject.ID, Valid: true}
 	}
 
-	if _, err := conn.ExecContext(ctx, `
+	if err := runInsert(`
         INSERT INTO audit_entries (
             id, timestamp, type, actor_kind, actor_id,
             subject_kind, subject_id, outcome,
@@ -290,18 +432,9 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 		subjKind, subjID, string(e.Outcome),
 		dataJSON, contextJSON, e.PrevHash, e.Hash,
 	); err != nil {
-		return nil, fmt.Errorf("audit: insert: %w", err)
+		return fmt.Errorf("audit: insert: %w", err)
 	}
-
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return nil, fmt.Errorf("audit: commit: %w", err)
-	}
-	committed = true
-
-	// Cache the new head for fast in-process reads. Other processes
-	// re-read on their next append, so a stale cache here is harmless.
-	w.lastHash = e.Hash
-	return &e, nil
+	return nil
 }
 
 // nextID generates the next audit entry id. Two correctness
@@ -323,7 +456,7 @@ func (w *SQLite) Append(ctx context.Context, e Entry) (*Entry, error) {
 // (loaded at Open + updated on every Append) and bumping the
 // timestamp if the freshly-generated ULID would sort at or below
 // it.
-func (w *SQLite) nextID(now time.Time) (string, error) {
+func (w *Store) nextID(now time.Time) (string, error) {
 	for attempt := 0; attempt < 100; attempt++ {
 		u, err := ulid.New(ulid.Timestamp(now), w.ulidEnt)
 		if err != nil {
@@ -382,7 +515,7 @@ func marshalNullableJSON(v any) (sql.NullString, error) {
 
 // Query reads entries matching filter, ordered ascending by id.
 // A default Limit is applied if none is set.
-func (w *SQLite) Query(ctx context.Context, filter Filter) ([]Entry, error) {
+func (w *Store) Query(ctx context.Context, filter Filter) ([]Entry, error) {
 	q, args := buildQuery(filter)
 	rows, err := w.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -403,7 +536,7 @@ func (w *SQLite) Query(ctx context.Context, filter Filter) ([]Entry, error) {
 
 // Latest returns the most recent entry by id ordering, or nil if
 // the log is empty.
-func (w *SQLite) Latest(ctx context.Context) (*Entry, error) {
+func (w *Store) Latest(ctx context.Context) (*Entry, error) {
 	row := w.db.QueryRowContext(ctx, baseSelectSQL+` ORDER BY id DESC LIMIT 1`)
 	e, err := scanEntry(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -549,7 +682,7 @@ func placeholders(n int) string {
 // Verify walks the chain from oldest to newest, recomputing each
 // hash and comparing to the stored value. Returns the first break,
 // or Valid=true if the whole chain is intact.
-func (w *SQLite) Verify(ctx context.Context) (*VerifyResult, error) {
+func (w *Store) Verify(ctx context.Context) (*VerifyResult, error) {
 	rows, err := w.db.QueryContext(ctx, baseSelectSQL+` ORDER BY id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("audit: verify query: %w", err)
@@ -594,19 +727,23 @@ func (w *SQLite) Verify(ctx context.Context) (*VerifyResult, error) {
 
 // --- Close -------------------------------------------------------------
 
-// Close shuts down the underlying database connection. Safe to call
-// multiple times.
-func (w *SQLite) Close(_ context.Context) error {
+// Close shuts down the underlying database connection if the Store
+// opened it (OpenSQLite / OpenPostgres path). Stores constructed
+// via OpenWith never own the database — the caller is expected to
+// close the database.Database they passed in.
+//
+// Safe to call multiple times.
+func (w *Store) Close(_ context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.db == nil {
+	if !w.ownsDB || w.dbMeta == nil {
 		return nil
 	}
-	err := w.db.Close()
-	w.db = nil
+	err := w.dbMeta.Close()
+	w.dbMeta = nil
 	return err
 }
 
 // Path returns the on-disk database path. Useful for tests and
 // diagnostic output (`loamss doctor` etc.).
-func (w *SQLite) Path() string { return w.path }
+func (w *Store) Path() string { return w.path }

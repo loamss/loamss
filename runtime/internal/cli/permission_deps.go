@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -62,7 +61,7 @@ func openPermissionDeps(cmd *cobra.Command) (*permissionDeps, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	w, err := audit.OpenSQLite(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "audit.db"))
+	w, err := openAuditWriter(cmd.Context(), cfg)
 	if err != nil {
 		_ = store.Close()
 		_ = db.Close()

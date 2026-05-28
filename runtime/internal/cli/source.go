@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -603,7 +602,7 @@ func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	w, err := audit.OpenSQLite(ctx, filepath.Join(cfg.Runtime.DataDir, "audit.db"))
+	w, err := openAuditWriter(ctx, cfg)
 	if err != nil {
 		_ = store.Close()
 		_ = db.Close()

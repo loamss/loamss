@@ -56,6 +56,17 @@ type RuntimeConfig struct {
 	// for Cloud Run / Heroku conventions). When set, the env var
 	// takes precedence over the YAML.
 	Database DatabaseConfig `yaml:"database,omitempty" json:"database,omitempty"`
+
+	// AuditDatabase picks the audit.db backend. Defaults to SQLite at
+	// <data_dir>/audit.db so the audit log gets its own write lock and
+	// isn't contending with the permission / source / capsule writers.
+	// Set Adapter: "postgres" + DSN to land it in the same managed
+	// Postgres as Database (or a separate one — audit volumes scale
+	// differently from runtime state).
+	//
+	// Env var override: LOAMSS_AUDIT_DATABASE_URL (when set, implies
+	// adapter=postgres).
+	AuditDatabase DatabaseConfig `yaml:"audit_database,omitempty" json:"audit_database,omitempty"`
 }
 
 // DatabaseConfig configures the runtime.db backend.
