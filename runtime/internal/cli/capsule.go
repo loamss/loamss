@@ -14,6 +14,7 @@ import (
 
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
+	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/config"
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
@@ -83,19 +84,23 @@ publishing to the registry.`,
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: no config attached; validating offline\n")
 			} else {
-				store, err := permission.Open(cmd.Context(),
-					filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+				db, err := openRuntimeDB(cmd.Context(), cfg)
 				if err != nil {
-					// Treat absence of a runtime as a soft signal:
-					// warn, then fall back to offline. Capsule authors
-					// on a developer machine without a configured
-					// Loamss shouldn't be blocked from validating
-					// their work.
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-						"warning: cannot open runtime permission store (%v); validating offline\n", err)
+						"warning: cannot open runtime database (%v); validating offline\n", err)
 				} else {
-					defer func() { _ = store.Close() }()
-					reg = &permissionRegistryAdapter{store: store, ctx: cmd.Context()}
+					store, err := permission.OpenWith(cmd.Context(), db)
+					if err != nil {
+						_ = db.Close()
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+							"warning: cannot open runtime permission store (%v); validating offline\n", err)
+					} else {
+						defer func() {
+							_ = store.Close()
+							_ = db.Close()
+						}()
+						reg = &permissionRegistryAdapter{store: store, ctx: cmd.Context()}
+					}
 				}
 			}
 		}
@@ -431,39 +436,54 @@ type capsuleDeps struct {
 	audit     *audit.SQLite
 	engine    *permission.Engine
 	installer *capsule.Installer
+	db        *database.Database // owning handle; closed last
 }
 
 // Close releases every handle. Errors are logged on a best-effort
 // basis; CLI exit dominates.
 func (d *capsuleDeps) Close() {
-	_ = d.store.Close()
-	_ = d.permStore.Close()
+	if d.store != nil {
+		_ = d.store.Close()
+	}
+	if d.permStore != nil {
+		_ = d.permStore.Close()
+	}
 	if d.audit != nil {
 		_ = d.audit.Close(context.Background())
 	}
+	if d.db != nil {
+		_ = d.db.Close()
+	}
 }
 
-// openCapsuleDeps opens the capsule store + permission store +
-// audit writer at their conventional paths, wires them into an
-// Installer, and returns the bundle.
+// openCapsuleDeps opens the capsule + permission stores against the
+// shared runtime database (SQLite by default; Postgres when
+// configured) and the audit writer at its conventional path.
 func openCapsuleDeps(cmd *cobra.Command) (*capsuleDeps, error) {
 	cfg := config.From(cmd.Context())
 	if cfg == nil {
 		return nil, errors.New("no config attached to context (programming error in CLI wiring)")
 	}
-	permStore, err := permission.Open(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	db, err := openRuntimeDB(cmd.Context(), cfg)
 	if err != nil {
 		return nil, err
 	}
-	capStore, err := capsule.OpenStore(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	permStore, err := permission.OpenWith(cmd.Context(), db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	capStore, err := capsule.OpenStoreWith(cmd.Context(), db)
 	if err != nil {
 		_ = permStore.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	w, err := audit.OpenSQLite(cmd.Context(), filepath.Join(cfg.Runtime.DataDir, "audit.db"))
 	if err != nil {
 		_ = permStore.Close()
 		_ = capStore.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	engine := permission.NewEngine(permStore, w)
@@ -475,6 +495,7 @@ func openCapsuleDeps(cmd *cobra.Command) (*capsuleDeps, error) {
 		audit:     w,
 		engine:    engine,
 		installer: installer,
+		db:        db,
 	}, nil
 }
 

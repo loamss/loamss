@@ -33,6 +33,7 @@ import (
 	_ "github.com/loamss/loamss/runtime/internal/adapter/storage/s3"          // registers storage:s3
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/database"
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
@@ -555,6 +556,7 @@ type sourceDeps struct {
 	memLayer      memlayer.Layer
 	modelAdapters []model.Adapter
 	logger        *slog.Logger
+	db            *database.Database // owning handle; closed last
 }
 
 func (d *sourceDeps) Close() {
@@ -576,6 +578,9 @@ func (d *sourceDeps) Close() {
 	for _, a := range d.modelAdapters {
 		_ = a.Close(context.Background())
 	}
+	if d.db != nil {
+		_ = d.db.Close()
+	}
 }
 
 func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
@@ -585,50 +590,65 @@ func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
 	}
 	ctx := cmd.Context()
 
-	store, err := source.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	// Open the shared runtime database (SQLite by default; Postgres
+	// when configured). source.Store + memlayer.Store both ride on
+	// this one handle.
+	db, err := openRuntimeDB(ctx, cfg)
 	if err != nil {
+		return nil, err
+	}
+
+	store, err := source.OpenStoreWith(ctx, db)
+	if err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	w, err := audit.OpenSQLite(ctx, filepath.Join(cfg.Runtime.DataDir, "audit.db"))
 	if err != nil {
 		_ = store.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	stor, err := storage.New(cfg.Storage.Adapter)
 	if err != nil {
 		_ = store.Close()
 		_ = w.Close(context.Background())
+		_ = db.Close()
 		return nil, fmt.Errorf("constructing storage adapter %q: %w", cfg.Storage.Adapter, err)
 	}
 	if err := stor.Init(ctx, cfg.Storage.Config); err != nil {
 		_ = store.Close()
 		_ = w.Close(context.Background())
+		_ = db.Close()
 		return nil, fmt.Errorf("initializing storage adapter: %w", err)
 	}
 
 	// Memory adapter + layer. The adapter is the vector store the
-	// source writes into via the layer; the layer also derives
-	// entities + threads in runtime.db. Both opens are cheap (SQLite
-	// WAL); the cost is small enough to do on every CLI invocation.
+	// source writes into via the layer; the layer's derived state
+	// (entities + threads) goes into the same runtime database the
+	// source store uses.
 	memAdapter, err := memadapter.New(cfg.Memory.Adapter)
 	if err != nil {
 		_ = store.Close()
 		_ = w.Close(context.Background())
 		_ = stor.Close(context.Background())
+		_ = db.Close()
 		return nil, fmt.Errorf("constructing memory adapter %q: %w", cfg.Memory.Adapter, err)
 	}
 	if err := memAdapter.Init(ctx, cfg.Memory.Config); err != nil {
 		_ = store.Close()
 		_ = w.Close(context.Background())
 		_ = stor.Close(context.Background())
+		_ = db.Close()
 		return nil, fmt.Errorf("initializing memory adapter: %w", err)
 	}
-	layerStore, err := memlayer.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	layerStore, err := memlayer.OpenStoreWith(ctx, db)
 	if err != nil {
 		_ = store.Close()
 		_ = w.Close(context.Background())
 		_ = stor.Close(context.Background())
 		_ = memAdapter.Close(context.Background())
+		_ = db.Close()
 		return nil, fmt.Errorf("opening memory layer store: %w", err)
 	}
 	logger := newLogger(cfg.Log, cmd.ErrOrStderr())
@@ -669,6 +689,7 @@ func openSourceDeps(cmd *cobra.Command) (*sourceDeps, error) {
 		memLayer:      layer,
 		modelAdapters: modelAdapters,
 		logger:        logger,
+		db:            db,
 	}, nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 
 	memadapter "github.com/loamss/loamss/runtime/internal/adapter/memory"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/database"
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 )
 
@@ -338,6 +338,7 @@ type memoryDeps struct {
 	adapter memadapter.Adapter
 	store   *memlayer.Store
 	layer   memlayer.Layer
+	db      *database.Database // owning handle; closed last
 }
 
 func (d *memoryDeps) Close() {
@@ -346,6 +347,9 @@ func (d *memoryDeps) Close() {
 	}
 	if d.adapter != nil {
 		_ = d.adapter.Close(context.Background())
+	}
+	if d.db != nil {
+		_ = d.db.Close()
 	}
 }
 
@@ -364,8 +368,14 @@ func openMemoryDeps(cmd *cobra.Command) (*memoryDeps, error) {
 		_ = adapter.Close(context.Background())
 		return nil, fmt.Errorf("initializing memory adapter: %w", err)
 	}
-	store, err := memlayer.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	db, err := openRuntimeDB(ctx, cfg)
 	if err != nil {
+		_ = adapter.Close(context.Background())
+		return nil, fmt.Errorf("opening runtime database: %w", err)
+	}
+	store, err := memlayer.OpenStoreWith(ctx, db)
+	if err != nil {
+		_ = db.Close()
 		_ = adapter.Close(context.Background())
 		return nil, fmt.Errorf("opening memory layer store: %w", err)
 	}
@@ -373,6 +383,7 @@ func openMemoryDeps(cmd *cobra.Command) (*memoryDeps, error) {
 	return &memoryDeps{
 		adapter: adapter,
 		store:   store,
+		db:      db,
 		layer:   memlayer.New(adapter, store, nil, logger),
 	}, nil
 }

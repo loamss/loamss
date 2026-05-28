@@ -31,6 +31,10 @@ const (
 	envLogLevel    = "LOAMSS_LOG_LEVEL"
 	envLogFormat   = "LOAMSS_LOG_FORMAT"
 	envRedactLevel = "LOAMSS_AUDIT_REDACTION_LEVEL"
+	envDatabaseURL = "LOAMSS_DATABASE_URL"
+	// envDatabaseURLAlt is the conventional Cloud Run / Heroku /
+	// Render env var. Checked only when LOAMSS_DATABASE_URL is unset.
+	envDatabaseURLAlt = "DATABASE_URL"
 )
 
 // Load resolves a Config from the given file path, environment, and defaults.
@@ -116,6 +120,19 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv(envRedactLevel); v != "" {
 		cfg.Audit.RedactionLevel = v
+	}
+	// Runtime database URL. LOAMSS_DATABASE_URL is the project's
+	// own env var; DATABASE_URL is checked as a fallback for the
+	// common Cloud Run / Heroku / Render convention. The env var
+	// implies adapter=postgres (no one passes a SQLite path via
+	// DATABASE_URL) — operators wanting SQLite at a custom path
+	// should set it in the YAML.
+	if v := os.Getenv(envDatabaseURL); v != "" {
+		cfg.Runtime.Database.Adapter = "postgres"
+		cfg.Runtime.Database.DSN = v
+	} else if v := os.Getenv(envDatabaseURLAlt); v != "" {
+		cfg.Runtime.Database.Adapter = "postgres"
+		cfg.Runtime.Database.DSN = v
 	}
 }
 

@@ -45,6 +45,29 @@ type RuntimeConfig struct {
 	// runtime resolves the profile from LOAMSS_PROFILE or from
 	// well-known cloud-platform env vars; see internal/profile.
 	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+
+	// Database picks the runtime.db backend. Defaults to SQLite at
+	// <data_dir>/runtime.db. Set Adapter: "postgres" + DSN to point
+	// at a managed Postgres for cloud deployments. The same store is
+	// shared across permission, source, capsule, memory_layer, and
+	// oauth subsystems.
+	//
+	// Env var override: LOAMSS_DATABASE_URL (also reads DATABASE_URL
+	// for Cloud Run / Heroku conventions). When set, the env var
+	// takes precedence over the YAML.
+	Database DatabaseConfig `yaml:"database,omitempty" json:"database,omitempty"`
+}
+
+// DatabaseConfig configures the runtime.db backend.
+type DatabaseConfig struct {
+	// Adapter is "sqlite" (default) or "postgres". Empty means SQLite.
+	Adapter string `yaml:"adapter,omitempty" json:"adapter,omitempty"`
+
+	// DSN is driver-specific:
+	//   - SQLite: filesystem path. Empty means <data_dir>/runtime.db.
+	//   - Postgres: libpq URL,
+	//     e.g. "postgres://user:pass@host:5432/dbname?sslmode=require".
+	DSN string `yaml:"dsn,omitempty" json:"dsn,omitempty"`
 }
 
 // AdapterConfig points the runtime at a specific adapter implementation

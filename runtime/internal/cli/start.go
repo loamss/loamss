@@ -32,7 +32,6 @@ import (
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
-	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/oauth"
@@ -116,11 +115,19 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// not workable on Postgres where each open would land on a
 	// different connection. Now they all share one *database.DB
 	// via the *Store.OpenWith constructors.
-	runtimeDB, err := database.OpenSQLite(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	//
+	// Driver picked from cfg.Runtime.Database (SQLite by default;
+	// Postgres when adapter == "postgres" or LOAMSS_DATABASE_URL
+	// is set).
+	runtimeDB, err := openRuntimeDB(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("opening runtime.db: %w", err)
 	}
 	defer func() { _ = runtimeDB.Close() }()
+	logger.Info("runtime.db opened",
+		"driver", runtimeDB.Driver(),
+		"dsn_kind", dsnKind(cfg.Runtime.Database.Adapter, cfg.Runtime.Database.DSN),
+	)
 
 	store, err := permission.OpenWith(ctx, runtimeDB)
 	if err != nil {
