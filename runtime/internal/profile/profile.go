@@ -16,10 +16,10 @@
 //
 // Resolution order (first non-empty wins):
 //
-//   1. Explicit config (cfg.Runtime.Profile)
-//   2. LOAMSS_PROFILE env var
-//   3. Auto-detection from cloud-platform env vars
-//   4. Default: Local
+//  1. Explicit config (cfg.Runtime.Profile)
+//  2. LOAMSS_PROFILE env var
+//  3. Auto-detection from cloud-platform env vars
+//  4. Default: Local
 //
 // The Profile shape is a typed string so config-file values can be
 // validated at load time. Unknown profile strings are an error.
@@ -72,6 +72,10 @@ type Detection struct {
 // Source identifies which resolution step picked the profile.
 type Source string
 
+// Recognised Source values. Each names a distinct step in the
+// resolution order described in this file's package comment; the
+// chosen step is recorded in Detection.Source for diagnostic
+// logging and for "loamss doctor" / "loamss status" output.
 const (
 	SourceConfig  Source = "config"
 	SourceEnvVar  Source = "env"

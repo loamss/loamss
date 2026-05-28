@@ -311,7 +311,7 @@ func (tx *Tx) rebind(query string) string {
 // inside a comment doesn't consume a parameter slot.
 //
 // Backslash escaping of single quotes is honored (`'it\'s'` stays
-// one string). Doubled single quotes (`'it''s'`) — the SQL standard
+// one string). Doubled single quotes (`'it”s'`) — the SQL standard
 // quoting form — are also handled correctly.
 //
 // This is enough for the runtime's stores; it's not a general SQL

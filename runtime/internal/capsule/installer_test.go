@@ -19,7 +19,7 @@ type installerFixture struct {
 	dir       string
 	permStore *permission.Store
 	capStore  *Store
-	audit     *audit.SQLite
+	audit     *audit.Store
 	engine    *permission.Engine
 	installer *Installer
 }

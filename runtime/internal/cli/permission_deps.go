@@ -23,7 +23,7 @@ import (
 type permissionDeps struct {
 	engine *permission.Engine
 	store  *permission.Store
-	audit  *audit.SQLite
+	audit  *audit.Store
 	db     *database.Database // owning handle; closed last
 }
 

@@ -518,13 +518,13 @@ func buildMetadata(rel string, parsed parsedFile, mtime time.Time) map[string]an
 // rune boundary, with an ellipsis appended when truncation happened.
 // Used to bound the metadata.snippet field so the memory adapter's
 // metadata blob stays small.
-func truncateForSnippet(s string, max int) string {
-	if len(s) <= max {
+func truncateForSnippet(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
 		return s
 	}
 	// Walk back to the nearest rune boundary so we don't slice a
 	// multi-byte character in half.
-	cut := max
+	cut := maxBytes
 	for cut > 0 && (s[cut]&0xC0) == 0x80 {
 		cut--
 	}

@@ -22,7 +22,7 @@ import (
 // teardown.
 type fullDeps struct {
 	store     *permission.Store
-	audit     *audit.SQLite
+	audit     *audit.Store
 	engine    *permission.Engine
 	tools     *mcp.Registry
 	resources *mcp.ResourceRegistry

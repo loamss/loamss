@@ -25,7 +25,7 @@ type testFixture struct {
 	h      *Handler
 	engine *permission.Engine
 	store  *permission.Store
-	audit  *audit.SQLite
+	audit  *audit.Store
 	client *permission.Client
 }
 

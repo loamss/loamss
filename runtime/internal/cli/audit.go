@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,14 +13,6 @@ import (
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
 )
-
-// auditDBPath returns the on-disk path of the audit hot store
-// derived from the resolved config. Currently fixed at
-// <data_dir>/audit.db; will become configurable when audit.spec's
-// AuditConfig grows a HotStoreDir field.
-func auditDBPath(cfg *config.Config) string {
-	return filepath.Join(cfg.Runtime.DataDir, "audit.db")
-}
 
 // openAuditWriterForCmd is the cobra-bridge convenience that reads
 // the resolved config from cmd's context and delegates to

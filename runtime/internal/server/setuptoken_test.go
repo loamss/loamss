@@ -618,10 +618,10 @@ func TestSetupTokenGate_ConsumeEmitsAuditEntry(t *testing.T) {
 // (the psql workaround in docs/deploying.md).
 //
 // Verifies the bearer round-trips by:
-//   1. submitting /console/init with the setup token
-//   2. extracting paired_console.token from the response
-//   3. using the bearer (no setup token) to call /console/state
-//   4. confirming 200
+//  1. submitting /console/init with the setup token
+//  2. extracting paired_console.token from the response
+//  3. using the bearer (no setup token) to call /console/state
+//  4. confirming 200
 func TestSetupTokenGate_ConsoleInitReturnsPairedBearer(t *testing.T) {
 	f := newGatedFixture(t)
 

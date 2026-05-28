@@ -25,8 +25,8 @@ import (
 //
 //   - When the gate is active and not yet consumed, requests on
 //     protected routes must carry either:
-//       a) a Bearer setup token matching the active token, or
-//       b) a Bearer paired-client credential the engine recognizes.
+//     a) a Bearer setup token matching the active token, or
+//     b) a Bearer paired-client credential the engine recognizes.
 //     The setup token is single-use — the first successful
 //     `/console/init` request flips Consumed to true and persists a
 //     sentinel file so subsequent restarts don't re-enable it.
@@ -44,12 +44,12 @@ import (
 // instance migration, snapshots, log scrapes). Two acceptable
 // origin paths:
 //
-//   1. LOAMSS_SETUP_TOKEN env var supplied by the operator at deploy
-//      time. This persists naturally — same env, same token across
-//      restarts.
-//   2. Auto-generated at process start. Lasts only the current
-//      instance lifetime; if Cloud Run cold-starts before init, the
-//      operator sees a fresh token in the new instance's logs.
+//  1. LOAMSS_SETUP_TOKEN env var supplied by the operator at deploy
+//     time. This persists naturally — same env, same token across
+//     restarts.
+//  2. Auto-generated at process start. Lasts only the current
+//     instance lifetime; if Cloud Run cold-starts before init, the
+//     operator sees a fresh token in the new instance's logs.
 type SetupTokenGate struct {
 	// activeToken is the token to compare incoming Bearer credentials
 	// against. Empty string means "no token issued for this process".

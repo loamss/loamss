@@ -14,7 +14,7 @@ import (
 // newEngine builds a permission Engine with a fresh runtime.db and
 // audit.db under a temp dir. Returns the engine, its store (for
 // direct manipulation), and the audit writer (for verifying entries).
-func newEngine(t *testing.T) (*Engine, *Store, *audit.SQLite) {
+func newEngine(t *testing.T) (*Engine, *Store, *audit.Store) {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := Open(context.Background(), filepath.Join(dir, "runtime.db"))

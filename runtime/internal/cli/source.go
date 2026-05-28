@@ -549,7 +549,7 @@ func maskedConfig(in map[string]any) map[string]any {
 // commands share. Lifetime: one set per CLI invocation.
 type sourceDeps struct {
 	store         *source.Store
-	audit         *audit.SQLite
+	audit         *audit.Store
 	storage       storage.Adapter
 	memAdapter    memadapter.Adapter
 	memLayer      memlayer.Layer

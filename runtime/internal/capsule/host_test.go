@@ -21,7 +21,7 @@ type hostFixture struct {
 	dir       string
 	permStore *permission.Store
 	capStore  *Store
-	audit     *audit.SQLite
+	audit     *audit.Store
 	engine    *permission.Engine
 	tools     *mcp.Registry
 	host      *Host

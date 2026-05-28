@@ -14,8 +14,8 @@ import (
 
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
-	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
 
@@ -433,7 +433,7 @@ capsule.uninstalled.`,
 type capsuleDeps struct {
 	store     *capsule.Store
 	permStore *permission.Store
-	audit     *audit.SQLite
+	audit     *audit.Store
 	engine    *permission.Engine
 	installer *capsule.Installer
 	db        *database.Database // owning handle; closed last
