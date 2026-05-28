@@ -10,6 +10,7 @@ import { Models } from "@/components/wizard/steps/Models";
 import { Connect } from "@/components/wizard/steps/Connect";
 import { Done } from "@/components/wizard/steps/Done";
 import { getConsoleState } from "@/lib/runtime-client";
+import { captureSetupTokenFromURL } from "@/lib/setup-token";
 import { useWizard, type WizardStep } from "@/lib/wizard-state";
 
 /*
@@ -68,6 +69,12 @@ export default function ConsoleRoot() {
   // most useful thing to show someone whose daemon isn't running
   // is the path to start it.
   useEffect(() => {
+    // Capture ?setup=<token> first, *before* any /console/* fetch.
+    // The function strips the param from the URL via replaceState so
+    // it doesn't end up in browser history. Idempotent — safe to
+    // call on every mount.
+    captureSetupTokenFromURL();
+
     const params = new URLSearchParams(window.location.search);
     if (params.get("step") || params.get("wizard") === "1") {
       setForceWizard(true);

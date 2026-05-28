@@ -22,6 +22,57 @@
  * the runtime's URL directly.
  */
 
+import { clearSetupToken, getSetupToken } from "./setup-token";
+
+/**
+ * authedFetch wraps the browser fetch with two pieces of glue every
+ * call site here needs:
+ *
+ *   1. Authorization header — if a setup token has been captured
+ *      (cloud profile during first-run) OR a paired-client bearer
+ *      has been stored later, attach it. Headers explicitly set by
+ *      the caller win.
+ *
+ *   2. 401-after-consumed handling — when the runtime answers 401
+ *      with a body shaped like the setup-token gate's "expected
+ *      setup token or paired-client bearer" error, we clear the
+ *      stored token. This way a Console reload after /console/init
+ *      doesn't silently keep sending a now-invalid token forever
+ *      (the operator would see "Auth required" and wonder why).
+ *
+ * Production behavior on laptop installs: getSetupToken returns
+ * null, no Authorization header is added, and the runtime gate is
+ * inactive anyway — fetch behavior is unchanged from before.
+ */
+async function authedFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = getSetupToken();
+  if (token) {
+    // Merge headers — preserve any caller-supplied Content-Type etc.
+    // Construct a Headers object so the case-insensitive merge works
+    // regardless of whether init.headers was a Record, an array, or
+    // a Headers instance.
+    const headers = new Headers(init.headers ?? {});
+    if (!headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    init = { ...init, headers };
+  }
+  const resp = await fetch(input, init);
+
+  // Self-heal: if the gate just consumed our token (another tab
+  // completed init, or the operator pasted the token after the
+  // runtime already had it stashed in the sentinel file), drop it
+  // so we stop sending it. The 401 itself still propagates to the
+  // caller — they decide how to surface the prompt to re-paste.
+  if (resp.status === 401 && token) {
+    clearSetupToken();
+  }
+  return resp;
+}
+
 // Default runtime base URL.
 //
 // In production the console is embedded inside the runtime binary
@@ -74,7 +125,7 @@ export async function probeRuntime(
 	opts: { signal?: AbortSignal } = {},
 ): Promise<RuntimeProbe | null> {
 	try {
-		const resp = await fetch(`${baseUrl}/healthz`, { signal: opts.signal });
+		const resp = await authedFetch(`${baseUrl}/healthz`, { signal: opts.signal });
 		if (!resp.ok) {
 			return null;
 		}
@@ -109,6 +160,8 @@ export async function probeOllama(
 	opts: { signal?: AbortSignal } = {},
 ): Promise<OllamaProbeResult> {
 	try {
+		// Plain fetch — Ollama is a separate process the browser talks
+		// to directly, not behind the Loamss runtime's auth gate.
 		const resp = await fetch(`${url}/api/tags`, { signal: opts.signal });
 		if (!resp.ok) {
 			return { state: "not-detected", reason: `HTTP ${resp.status}` };
@@ -230,7 +283,7 @@ export async function createPairingCode(
 ): Promise<CreatePairingCodeResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(`${baseUrl}/console/clients/pair`, {
+		const resp = await authedFetch(`${baseUrl}/console/clients/pair`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -277,7 +330,7 @@ export async function revokeClient(
 ): Promise<RevokeClientResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/clients/${encodeURIComponent(id)}`,
 			{
 				method: "DELETE",
@@ -321,7 +374,7 @@ export async function resolveApproval(
 ): Promise<ResolveApprovalResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/approvals/${encodeURIComponent(id)}/${decision}`,
 			{
 				method: "POST",
@@ -396,7 +449,7 @@ export async function installCapsule(
 ): Promise<InstallCapsuleResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(`${baseUrl}/console/capsules`, {
+		const resp = await authedFetch(`${baseUrl}/console/capsules`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ path }),
@@ -460,7 +513,7 @@ export async function uninstallCapsule(
 ): Promise<CapsuleLifecycleResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/capsules/${encodeURIComponent(name)}`,
 			{ method: "DELETE", signal: opts.signal },
 		);
@@ -483,7 +536,7 @@ async function capsuleAction(
 ): Promise<CapsuleLifecycleResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(`${baseUrl}${path}`, {
+		const resp = await authedFetch(`${baseUrl}${path}`, {
 			method: "POST",
 			signal: opts.signal,
 		});
@@ -628,7 +681,7 @@ export async function getConsoleState(
 	opts: { signal?: AbortSignal } = {},
 ): Promise<ConsoleState | null> {
 	try {
-		const resp = await fetch(`${baseUrl}/console/state`, {
+		const resp = await authedFetch(`${baseUrl}/console/state`, {
 			signal: opts.signal,
 		});
 		if (!resp.ok) {
@@ -670,7 +723,7 @@ export async function addSource(
 ): Promise<AddSourceResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(`${baseUrl}/console/sources`, {
+		const resp = await authedFetch(`${baseUrl}/console/sources`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
@@ -712,7 +765,7 @@ export async function syncSource(
 ): Promise<SyncSourceResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/sources/${encodeURIComponent(name)}/sync`,
 			{ method: "POST", signal: opts.signal },
 		);
@@ -746,7 +799,7 @@ export async function deleteSource(
 ): Promise<DeleteSourceResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/sources/${encodeURIComponent(name)}`,
 			{ method: "DELETE", signal: opts.signal },
 		);
@@ -795,7 +848,7 @@ export async function applyConsoleInit(
 		? `${baseUrl}/console/init?overwrite=1`
 		: `${baseUrl}/console/init`;
 	try {
-		const resp = await fetch(url, {
+		const resp = await authedFetch(url, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
@@ -890,7 +943,7 @@ export async function listOAuthClients(
 ): Promise<ListOAuthClientsResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(`${baseUrl}/console/oauth/clients`, {
+		const resp = await authedFetch(`${baseUrl}/console/oauth/clients`, {
 			signal: opts.signal,
 		});
 		if (resp.ok) {
@@ -915,7 +968,7 @@ export async function listOAuthProviders(
 ): Promise<ListOAuthProvidersResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(`${baseUrl}/console/oauth/providers`, {
+		const resp = await authedFetch(`${baseUrl}/console/oauth/providers`, {
 			signal: opts.signal,
 		});
 		if (resp.ok) {
@@ -947,7 +1000,7 @@ export async function setOAuthClient(
 ): Promise<SetOAuthClientResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/oauth/clients/${encodeURIComponent(input.provider)}`,
 			{
 				method: "POST",
@@ -981,7 +1034,7 @@ export async function deleteOAuthClient(
 ): Promise<DeleteOAuthClientResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/oauth/clients/${encodeURIComponent(provider)}`,
 			{
 				method: "DELETE",
@@ -1029,7 +1082,7 @@ export async function beginOAuthFlow(
 ): Promise<BeginOAuthFlowResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/oauth/begin?capsule=${encodeURIComponent(capsule)}`,
 			{
 				method: "POST",
@@ -1062,7 +1115,7 @@ export async function getOAuthStatus(
 ): Promise<OAuthStatusResult> {
 	const baseUrl = opts.baseUrl ?? DEFAULT_RUNTIME_URL;
 	try {
-		const resp = await fetch(
+		const resp = await authedFetch(
 			`${baseUrl}/console/oauth/status?capsule=${encodeURIComponent(capsule)}`,
 			{ signal: opts.signal },
 		);

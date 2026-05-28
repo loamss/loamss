@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/primitives/Button";
+import { SetupTokenAffordance } from "@/components/wizard/SetupTokenAffordance";
 import { useWizard } from "@/lib/wizard-state";
 
 /*
@@ -94,6 +95,12 @@ export function Welcome() {
             Have a config file already? Import it.
           </button>
         </div>
+
+        {/* Setup-token affordance — hidden on laptop installs, expands
+         * to a paste field on cloud deploys where the runtime's
+         * SetupTokenGate is active. Hides itself entirely once a token
+         * has been captured (from `?setup=` or a previous paste). */}
+        <SetupTokenAffordance />
       </div>
 
       {/* A small piece of editorial flourish at the bottom — a brief
