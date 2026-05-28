@@ -32,9 +32,19 @@ type RuntimeConfig struct {
 	DataDir string `yaml:"data_dir" json:"data_dir"`
 
 	// ListenAddr is the host:port the MCP surface and console API bind to.
-	// Default 127.0.0.1:7777 — never auto-exposes publicly. Set explicitly
-	// (with full understanding) to expose externally.
+	// In `local` profile the default is 127.0.0.1:7777 — never auto-exposes
+	// publicly. In `cloud` profile the default is 0.0.0.0:$PORT (the PORT
+	// env var Cloud Run / Fly / etc. inject, falling back to 7777). Always
+	// honored verbatim when explicitly set.
 	ListenAddr string `yaml:"listen_addr" json:"listen_addr"`
+
+	// Profile names the deployment shape. "local" (the default) is the
+	// laptop install — 127.0.0.1 binding, no auth front-door on the
+	// wizard. "cloud" is the container install — 0.0.0.0:$PORT, setup-
+	// token-gated wizard, expects a managed Postgres. When unset, the
+	// runtime resolves the profile from LOAMSS_PROFILE or from
+	// well-known cloud-platform env vars; see internal/profile.
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
 }
 
 // AdapterConfig points the runtime at a specific adapter implementation

@@ -37,6 +37,7 @@ import (
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/oauth"
 	"github.com/loamss/loamss/runtime/internal/permission"
+	"github.com/loamss/loamss/runtime/internal/profile"
 	"github.com/loamss/loamss/runtime/internal/server"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
@@ -70,12 +71,40 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("no config attached to context (programming error in the CLI wiring)")
 	}
 
+	// Resolve the deployment profile. config > LOAMSS_PROFILE > cloud
+	// auto-detection > "local". The chosen profile influences the
+	// listener bind (cloud → 0.0.0.0:$PORT) and, in subsequent W2
+	// commits, the wizard's setup-token gate.
+	det, err := profile.Resolve(
+		cfg.Runtime.Profile,
+		os.Getenv("LOAMSS_PROFILE"),
+		profile.OSEnvLookup,
+	)
+	if err != nil {
+		return fmt.Errorf("resolving profile: %w", err)
+	}
+
+	// In cloud profile, default listen_addr to 0.0.0.0:$PORT
+	// (honoring the PORT env var Cloud Run / Fly / Render / etc.
+	// inject) when the operator hasn't set it explicitly. Local
+	// profile leaves cfg.Runtime.ListenAddr alone — the config
+	// default (127.0.0.1:7777) stands.
+	if det.Profile == profile.Cloud {
+		if v := os.Getenv("PORT"); v != "" && isDefaultListenAddr(cfg.Runtime.ListenAddr) {
+			cfg.Runtime.ListenAddr = "0.0.0.0:" + v
+		} else if isDefaultListenAddr(cfg.Runtime.ListenAddr) {
+			cfg.Runtime.ListenAddr = "0.0.0.0:7777"
+		}
+	}
+
 	logger := newLogger(cfg.Log, cmd.ErrOrStderr())
 	logger.Info("loamss starting",
 		"version", version,
 		"commit", commit,
 		"data_dir", cfg.Runtime.DataDir,
 		"listen_addr", cfg.Runtime.ListenAddr,
+		"profile", det.Profile,
+		"profile_source", det.Detail,
 	)
 
 	ctx := cmd.Context()
@@ -593,6 +622,19 @@ func pickGenerativeAdapter(ctx context.Context, adapters []model.Adapter, logger
 		return nil
 	}
 	return none
+}
+
+// isDefaultListenAddr reports whether addr is the config-default
+// value, so the cloud profile can know whether the operator
+// explicitly set a custom address (in which case we leave it
+// alone) or just inherited the default (which we should override
+// for cloud).
+//
+// Kept as a single source of truth here rather than imported from
+// the config package because the runtime treats anything
+// equivalent to the default the same way.
+func isDefaultListenAddr(addr string) bool {
+	return addr == "" || addr == "127.0.0.1:7777"
 }
 
 // installSignalTrap returns a channel that closes when SIGINT or SIGTERM
