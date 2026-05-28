@@ -105,7 +105,19 @@ func (s *Store) Path() string { return s.path }
 // migrations are applied in order at Open time. Adding a new
 // migration is the schema-evolution path; never edit an existing
 // migration's SQL after it's been applied in any deployment.
-var migrations = []string{
+//
+// migrationsSQLite + migrationsPostgres are parallel arrays: index N
+// in both is "migration N." The migrate() dispatcher picks the right
+// one based on driver. When adding a migration, add to both arrays.
+//
+// Type translation rules used throughout these stores:
+//   - SQLite TEXT (ISO-8601 timestamps) → Postgres TIMESTAMPTZ
+//   - SQLite INTEGER (used as bool 0/1)  → Postgres BOOLEAN
+//   - Everything else                    → TEXT in both
+//
+// Both dialects accept IF NOT EXISTS on CREATE TABLE/INDEX, so the
+// idempotent-migration property holds in either backend.
+var migrationsSQLite = []string{
 	// 1: initial schema.
 	`
 CREATE TABLE IF NOT EXISTS capabilities (
@@ -180,10 +192,108 @@ CREATE INDEX IF NOT EXISTS idx_pairing_codes_open ON pairing_codes(redeemed_at, 
 `,
 }
 
+// migrationsPostgres mirrors migrationsSQLite with column types that
+// the existing application code passes natively without per-call-site
+// adaptation:
+//
+//   - Timestamps: TEXT (the application formats time.RFC3339Nano on
+//     write and parses it back on read; portable across both drivers
+//     without scanning into time.Time).
+//   - Booleans: INTEGER 0/1 (the application uses int conversions on
+//     write and `value != 0` on read; portable without coercion).
+//
+// We're trading "idiomatic Postgres" for "one codebase, two
+// backends, zero per-call-site type juggling." Acceptable because
+// the runtime never runs SQL-side time-range or boolean-aware
+// queries against these tables — filtering happens in Go.
+var migrationsPostgres = []string{
+	// 1: initial schema.
+	`
+CREATE TABLE IF NOT EXISTS capabilities (
+    name             TEXT PRIMARY KEY,
+    namespace        TEXT NOT NULL,
+    direction        TEXT NOT NULL,
+    default_approval INTEGER NOT NULL,
+    scope_schema     TEXT NOT NULL,
+    declared_by      TEXT,
+    registered_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_capabilities_namespace ON capabilities(namespace);
+
+CREATE TABLE IF NOT EXISTS grants (
+    id                       TEXT PRIMARY KEY,
+    principal_kind           TEXT NOT NULL,
+    principal_id             TEXT NOT NULL,
+    capability               TEXT NOT NULL,
+    scope_json               TEXT,
+    framing                  TEXT NOT NULL,
+    rationale                TEXT,
+    user_note                TEXT,
+    requires_user_approval   INTEGER NOT NULL,
+    issued_at                TEXT NOT NULL,
+    expires_at               TEXT,
+    revoked_at               TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_grants_principal  ON grants(principal_kind, principal_id);
+CREATE INDEX IF NOT EXISTS idx_grants_capability ON grants(capability);
+CREATE INDEX IF NOT EXISTS idx_grants_active     ON grants(principal_kind, principal_id, capability, revoked_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS pending_approvals (
+    id                    TEXT PRIMARY KEY,
+    grant_id              TEXT NOT NULL,
+    principal_kind        TEXT NOT NULL,
+    principal_id          TEXT NOT NULL,
+    capability            TEXT NOT NULL,
+    attempted_scope_json  TEXT,
+    rationale             TEXT,
+    state                 TEXT NOT NULL,
+    requested_at          TEXT NOT NULL,
+    decided_at            TEXT,
+    decided_by            TEXT,
+    decision_note         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_state ON pending_approvals(state);
+CREATE INDEX IF NOT EXISTS idx_approvals_principal ON pending_approvals(principal_kind, principal_id);
+`,
+	// 2: external-client pairing — clients table + single-use codes.
+	`
+CREATE TABLE IF NOT EXISTS clients (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    credential_hash TEXT NOT NULL,
+    metadata_json   TEXT,
+    paired_at       TEXT NOT NULL,
+    last_seen_at    TEXT,
+    revoked_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_clients_revoked ON clients(revoked_at);
+
+CREATE TABLE IF NOT EXISTS pairing_codes (
+    code                 TEXT PRIMARY KEY,
+    client_name          TEXT NOT NULL,
+    created_by           TEXT,
+    created_at           TEXT NOT NULL,
+    expires_at           TEXT NOT NULL,
+    redeemed_at          TEXT,
+    redeemed_client_id   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pairing_codes_open ON pairing_codes(redeemed_at, expires_at);
+`,
+}
+
+// migrationsFor returns the migration array for the given driver. The
+// two arrays are kept parallel by index — adding a new migration
+// means adding to both.
+func migrationsFor(driver database.Driver) []string {
+	if driver == database.DriverPostgres {
+		return migrationsPostgres
+	}
+	return migrationsSQLite
+}
+
 // migrate brings the database schema up to the latest version and
 // seeds the canonical capability registry on first run.
 func (s *Store) migrate(ctx context.Context) error {
-	// Track applied migrations in their own table.
 	if _, err := s.db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version    INTEGER PRIMARY KEY,
@@ -198,7 +308,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("permission: reading migration version: %w", err)
 	}
 
-	for i, sqlText := range migrations {
+	for i, sqlText := range migrationsFor(s.db.Driver()) {
 		version := i + 1
 		if version <= current {
 			continue

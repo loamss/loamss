@@ -145,7 +145,13 @@ func (s *Store) Path() string { return s.path }
 
 // --- migrations --------------------------------------------------------
 
-var sourceMigrations = []string{
+// sourceMigrationsSQLite + sourceMigrationsPostgres are parallel
+// arrays — index N in both is "migration N." Adding a new migration
+// means adding to both.
+//
+// Postgres differences: TIMESTAMPTZ instead of TEXT timestamps; BYTEA
+// instead of BLOB for the cursor blob.
+var sourceMigrationsSQLite = []string{
 	// 1: initial sources table.
 	`
 CREATE TABLE IF NOT EXISTS sources (
@@ -175,6 +181,40 @@ CREATE INDEX IF NOT EXISTS idx_sources_owner_capsule ON sources(owner_capsule);
 `,
 }
 
+// sourceMigrationsPostgres uses TEXT for timestamps and BYTEA for the
+// cursor blob. See migrationsPostgres in permission/store.go for the
+// rationale on TEXT timestamps.
+var sourceMigrationsPostgres = []string{
+	// 1: initial sources table.
+	`
+CREATE TABLE IF NOT EXISTS sources (
+    id                      TEXT PRIMARY KEY,
+    name                    TEXT NOT NULL UNIQUE,
+    adapter_id              TEXT NOT NULL,
+    config_json             TEXT NOT NULL,
+    cursor                  BYTEA,
+    last_sync_at            TEXT,
+    last_sync_status        TEXT,
+    last_sync_summary_json  TEXT,
+    added_at                TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sources_adapter ON sources(adapter_id);
+`,
+	// 2: owner_capsule column for capsule-ingestor rows.
+	`
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS owner_capsule TEXT;
+CREATE INDEX IF NOT EXISTS idx_sources_owner_capsule ON sources(owner_capsule);
+`,
+}
+
+func sourceMigrationsFor(driver database.Driver) []string {
+	if driver == database.DriverPostgres {
+		return sourceMigrationsPostgres
+	}
+	return sourceMigrationsSQLite
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS source_schema_migrations (
@@ -188,7 +228,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := row.Scan(&current); err != nil {
 		return fmt.Errorf("source: reading migration version: %w", err)
 	}
-	for i, sqlText := range sourceMigrations {
+	for i, sqlText := range sourceMigrationsFor(s.db.Driver()) {
 		version := i + 1
 		if version <= current {
 			continue

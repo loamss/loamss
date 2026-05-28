@@ -122,7 +122,7 @@ func (s *Store) Path() string { return s.path }
 
 // --- migrations --------------------------------------------------------
 
-var capsuleMigrations = []string{
+var capsuleMigrationsSQLite = []string{
 	// 1: initial capsules table.
 	`
 CREATE TABLE IF NOT EXISTS capsules (
@@ -140,6 +140,33 @@ CREATE INDEX IF NOT EXISTS idx_capsules_name ON capsules(name);
 `,
 }
 
+// capsuleMigrationsPostgres uses TEXT for timestamps; see
+// migrationsPostgres in permission/store.go for the rationale.
+var capsuleMigrationsPostgres = []string{
+	// 1: initial capsules table.
+	`
+CREATE TABLE IF NOT EXISTS capsules (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    version         TEXT NOT NULL,
+    spec_version    TEXT NOT NULL,
+    author_name     TEXT NOT NULL,
+    author_url      TEXT,
+    manifest_json   TEXT NOT NULL,
+    install_path    TEXT NOT NULL,
+    installed_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_capsules_name ON capsules(name);
+`,
+}
+
+func capsuleMigrationsFor(driver database.Driver) []string {
+	if driver == database.DriverPostgres {
+		return capsuleMigrationsPostgres
+	}
+	return capsuleMigrationsSQLite
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS capsule_schema_migrations (
@@ -153,7 +180,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := row.Scan(&current); err != nil {
 		return fmt.Errorf("capsule: reading migration version: %w", err)
 	}
-	for i, sqlText := range capsuleMigrations {
+	for i, sqlText := range capsuleMigrationsFor(s.db.Driver()) {
 		version := i + 1
 		if version <= current {
 			continue

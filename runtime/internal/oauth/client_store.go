@@ -86,7 +86,7 @@ func (s *ClientStore) Close() error {
 	return nil
 }
 
-var clientStoreMigrations = []string{
+var clientStoreMigrationsSQLite = []string{
 	// 1: oauth_clients table — one row per user-registered OAuth client.
 	`
 CREATE TABLE IF NOT EXISTS oauth_clients (
@@ -97,6 +97,28 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
     updated_at     TEXT NOT NULL
 );
 `,
+}
+
+// clientStoreMigrationsPostgres uses TEXT for timestamps; see
+// migrationsPostgres in permission/store.go for the rationale.
+var clientStoreMigrationsPostgres = []string{
+	// 1: oauth_clients table — one row per user-registered OAuth client.
+	`
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    provider       TEXT PRIMARY KEY,
+    client_id      TEXT NOT NULL,
+    client_secret  TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+`,
+}
+
+func clientStoreMigrationsFor(driver database.Driver) []string {
+	if driver == database.DriverPostgres {
+		return clientStoreMigrationsPostgres
+	}
+	return clientStoreMigrationsSQLite
 }
 
 func (s *ClientStore) migrate(ctx context.Context) error {
@@ -112,7 +134,7 @@ func (s *ClientStore) migrate(ctx context.Context) error {
 	if err := row.Scan(&current); err != nil {
 		return fmt.Errorf("oauth: reading migration version: %w", err)
 	}
-	for i, sqlText := range clientStoreMigrations {
+	for i, sqlText := range clientStoreMigrationsFor(s.db.Driver()) {
 		version := i + 1
 		if version <= current {
 			continue

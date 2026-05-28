@@ -95,7 +95,7 @@ func (s *Store) Path() string { return s.path }
 
 // --- schema -----------------------------------------------------------
 
-var migrations = []string{
+var migrationsSQLite = []string{
 	// 1: initial entities + threads + mapping tables.
 	`
 CREATE TABLE IF NOT EXISTS memory_layer_entities (
@@ -157,6 +157,77 @@ CREATE INDEX IF NOT EXISTS idx_mlte_entry ON memory_layer_thread_entries(namespa
 `,
 }
 
+// migrationsPostgres uses TEXT for timestamps; see migrationsPostgres
+// in permission/store.go for the rationale.
+var migrationsPostgres = []string{
+	// 1: initial entities + threads + mapping tables.
+	`
+CREATE TABLE IF NOT EXISTS memory_layer_entities (
+    id            TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL,
+    canonical     TEXT NOT NULL,
+    namespace     TEXT NOT NULL,
+    aliases_json  TEXT NOT NULL,
+    first_seen    TEXT NOT NULL,
+    last_seen     TEXT NOT NULL,
+    entry_count   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mle_kind ON memory_layer_entities(kind);
+CREATE INDEX IF NOT EXISTS idx_mle_ns ON memory_layer_entities(namespace);
+CREATE INDEX IF NOT EXISTS idx_mle_canon ON memory_layer_entities(canonical);
+
+CREATE TABLE IF NOT EXISTS memory_layer_aliases (
+    alias        TEXT NOT NULL,
+    alias_kind   TEXT NOT NULL,
+    namespace    TEXT NOT NULL,
+    entity_id    TEXT NOT NULL,
+    PRIMARY KEY (alias, alias_kind, namespace),
+    FOREIGN KEY (entity_id) REFERENCES memory_layer_entities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mla_entity ON memory_layer_aliases(entity_id);
+
+CREATE TABLE IF NOT EXISTS memory_layer_threads (
+    id           TEXT PRIMARY KEY,
+    namespace    TEXT NOT NULL,
+    external_id  TEXT NOT NULL,
+    subject      TEXT,
+    first_seen   TEXT NOT NULL,
+    last_seen    TEXT NOT NULL,
+    entry_count  INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (namespace, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mlt_ns ON memory_layer_threads(namespace);
+
+CREATE TABLE IF NOT EXISTS memory_layer_entity_entries (
+    entity_id    TEXT NOT NULL,
+    namespace    TEXT NOT NULL,
+    entry_id     TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    entry_date   TEXT,
+    PRIMARY KEY (entity_id, namespace, entry_id, role),
+    FOREIGN KEY (entity_id) REFERENCES memory_layer_entities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mlee_entry ON memory_layer_entity_entries(namespace, entry_id);
+
+CREATE TABLE IF NOT EXISTS memory_layer_thread_entries (
+    thread_id    TEXT NOT NULL,
+    namespace    TEXT NOT NULL,
+    entry_id     TEXT NOT NULL,
+    entry_date   TEXT,
+    PRIMARY KEY (thread_id, namespace, entry_id),
+    FOREIGN KEY (thread_id) REFERENCES memory_layer_threads(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mlte_entry ON memory_layer_thread_entries(namespace, entry_id);
+`,
+}
+
+func migrationsFor(driver database.Driver) []string {
+	if driver == database.DriverPostgres {
+		return migrationsPostgres
+	}
+	return migrationsSQLite
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS memory_layer_schema_migrations (
@@ -171,7 +242,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := row.Scan(&current); err != nil {
 		return fmt.Errorf("memory layer: reading migration version: %w", err)
 	}
-	for i, sqlText := range migrations {
+	for i, sqlText := range migrationsFor(s.db.Driver()) {
 		v := i + 1
 		if v <= current {
 			continue
