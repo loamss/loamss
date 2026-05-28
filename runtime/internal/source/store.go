@@ -73,8 +73,8 @@ type Configured struct {
 // source_schema_migrations table tracks this store's migration
 // version independently.
 type Store struct {
-	db     *sql.DB
-	dbMeta *database.Database
+	db     *database.DB       // wraps *sql.DB; rebinds ? → $N for postgres
+	dbMeta *database.Database // owning handle when ownsDB; borrowed when not
 	ownsDB bool
 	path   string
 
@@ -111,11 +111,11 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 // Database. The caller retains ownership; Close on the returned
 // Store will not close the database.
 func OpenStoreWith(ctx context.Context, db *database.Database) (*Store, error) {
-	if db == nil || db.DB == nil {
+	if db == nil || db.Conn() == nil {
 		return nil, errors.New("source: OpenStoreWith requires a non-nil Database")
 	}
 	s := &Store{
-		db:      db.DB,
+		db:      db.Conn(),
 		dbMeta:  db,
 		path:    db.DSN(),
 		ulidEnt: ulid.Monotonic(rand.Reader, 0),
@@ -134,8 +134,8 @@ func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.ownsDB && s.db != nil {
-		return s.db.Close()
+	if s.ownsDB && s.dbMeta != nil {
+		return s.dbMeta.Close()
 	}
 	return nil
 }

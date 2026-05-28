@@ -37,8 +37,8 @@ type ClientCredential struct {
 // ClientStore persists per-user OAuth clients. Shares runtime.db
 // with the permission / capsule / source / memory_layer stores.
 type ClientStore struct {
-	db     *sql.DB
-	dbMeta *database.Database
+	db     *database.DB       // wraps *sql.DB; rebinds ? → $N for postgres
+	dbMeta *database.Database // owning handle when ownsDB; borrowed when not
 	ownsDB bool
 
 	mu sync.Mutex
@@ -65,10 +65,10 @@ func OpenClientStore(ctx context.Context, dbPath string) (*ClientStore, error) {
 // OpenClientStoreWith creates an OAuth client store on top of an
 // already-open Database. The caller retains ownership.
 func OpenClientStoreWith(ctx context.Context, db *database.Database) (*ClientStore, error) {
-	if db == nil || db.DB == nil {
+	if db == nil || db.Conn() == nil {
 		return nil, errors.New("oauth: OpenClientStoreWith requires a non-nil Database")
 	}
-	s := &ClientStore{db: db.DB, dbMeta: db}
+	s := &ClientStore{db: db.Conn(), dbMeta: db}
 	if err := s.migrate(ctx); err != nil {
 		return nil, err
 	}
@@ -80,8 +80,8 @@ func (s *ClientStore) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.ownsDB && s.db != nil {
-		return s.db.Close()
+	if s.ownsDB && s.dbMeta != nil {
+		return s.dbMeta.Close()
 	}
 	return nil
 }

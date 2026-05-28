@@ -26,9 +26,9 @@ import (
 // transactions are avoided; each operation is one short SQL statement
 // (or a tight transaction for multi-statement work).
 type Store struct {
-	db     *sql.DB
-	dbMeta *database.Database // nil when Open path; set when OpenWith path
-	ownsDB bool               // true when Open path opened the *sql.DB; false otherwise
+	db     *database.DB       // wraps *sql.DB; rebinds ? → $N for postgres
+	dbMeta *database.Database // owning handle when ownsDB; borrowed when not
+	ownsDB bool               // true if Open path opened the underlying *sql.DB
 	path   string
 
 	// ulidMu protects ulidEnt. Monotonic ULID generation requires
@@ -67,11 +67,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // runtime.db handle across permission, source, capsule, memory_layer,
 // and oauth subsystems.
 func OpenWith(ctx context.Context, db *database.Database) (*Store, error) {
-	if db == nil || db.DB == nil {
+	if db == nil || db.Conn() == nil {
 		return nil, errors.New("permission: OpenWith requires a non-nil Database")
 	}
 	s := &Store{
-		db:      db.DB,
+		db:      db.Conn(),
 		dbMeta:  db,
 		path:    db.DSN(),
 		ulidEnt: ulid.Monotonic(rand.Reader, 0),
@@ -91,8 +91,8 @@ func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.ownsDB && s.db != nil {
-		return s.db.Close()
+	if s.ownsDB && s.dbMeta != nil {
+		return s.dbMeta.Close()
 	}
 	return nil
 }

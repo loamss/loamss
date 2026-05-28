@@ -29,8 +29,8 @@ import (
 // the Store's mu serializes inserts so monotonic ULIDs stay
 // monotonic.
 type Store struct {
-	db     *sql.DB
-	dbMeta *database.Database
+	db     *database.DB       // wraps *sql.DB; rebinds ? → $N for postgres
+	dbMeta *database.Database // owning handle when ownsDB; borrowed when not
 	ownsDB bool
 	path   string
 
@@ -61,11 +61,11 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 // OpenStoreWith creates a memory layer Store on top of an already-open
 // Database. The caller retains ownership of the Database.
 func OpenStoreWith(ctx context.Context, db *database.Database) (*Store, error) {
-	if db == nil || db.DB == nil {
+	if db == nil || db.Conn() == nil {
 		return nil, errors.New("memory layer: OpenStoreWith requires a non-nil Database")
 	}
 	s := &Store{
-		db:      db.DB,
+		db:      db.Conn(),
 		dbMeta:  db,
 		path:    db.DSN(),
 		ulidEnt: ulid.Monotonic(rand.Reader, 0),
@@ -84,8 +84,8 @@ func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.ownsDB && s.db != nil {
-		return s.db.Close()
+	if s.ownsDB && s.dbMeta != nil {
+		return s.dbMeta.Close()
 	}
 	return nil
 }
@@ -747,7 +747,7 @@ func scanThread(r rowScanner) (*Thread, error) {
 // scanEntityLocked reads an entity by id inside a transaction. Used
 // by upsertEntityLocked to merge against an existing row without
 // taking another connection.
-func (s *Store) scanEntityLocked(tx *sql.Tx, id string, e *Entity) error {
+func (s *Store) scanEntityLocked(tx *database.Tx, id string, e *Entity) error {
 	row := tx.QueryRowContext(context.Background(),
 		entitySelect+` WHERE id = ?`, id)
 	got, err := scanEntity(row)
