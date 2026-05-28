@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -655,7 +656,14 @@ func writeCallbackPage(w http.ResponseWriter, ok bool, errMsg string) {
 	if ok {
 		_, _ = fmt.Fprint(w, callbackPageOK)
 	} else {
-		_, _ = fmt.Fprintf(w, callbackPageErr, errMsg)
+		// HTML-escape errMsg before splicing into the page body —
+		// the upstream sources for errMsg include OAuth provider
+		// responses (anyone with a redirect URL can craft these) and
+		// state-mismatch values. CodeQL go/reflected-xss flagged
+		// this on the orchestrator's loopback handler; the gmail
+		// connector's loopback handler is escaped the same way (see
+		// internal/source/gmail/oauth.go).
+		_, _ = fmt.Fprintf(w, callbackPageErr, html.EscapeString(errMsg))
 	}
 }
 

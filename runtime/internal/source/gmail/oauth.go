@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -96,7 +97,14 @@ func (f *pendingAuthFlow) handleCallback(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if errCode != "" {
-		_, _ = fmt.Fprintf(w, callbackErrorHTML, errCode)
+		// HTML-escape the error code before splicing it into the
+		// response body. The OAuth provider can put arbitrary content
+		// in ?error= (it's user-controlled to the extent that anyone
+		// can craft a URL that hits our loopback listener with this
+		// query string), so without escaping an attacker could inject
+		// <script> tags into the "Connection failed" page. Flagged
+		// by CodeQL go/reflected-xss.
+		_, _ = fmt.Fprintf(w, callbackErrorHTML, html.EscapeString(errCode))
 		select {
 		case f.codeCh <- loopbackResult{err: fmt.Errorf("oauth error: %s", errCode)}:
 		default:
