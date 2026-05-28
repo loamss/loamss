@@ -1,10 +1,16 @@
 # Getting started
 
-A walkthrough for installing Loamss on your laptop and pairing an
-external agent against it. Plain command list — pick the install
+A walkthrough for installing Loamss **on your laptop** and pairing
+an external agent against it. Plain command list — pick the install
 path that fits your machine and follow the steps top to bottom.
 
 End-to-end time: about 10 minutes if `brew install` is fast.
+
+> **Picking a setup path?** This is the laptop walkthrough.
+> If you want a Cloud Run / Fly / GKE deploy, jump to
+> [`deploying.md`](deploying.md) instead. If you're not sure
+> which path fits, [`use-cases.md`](use-cases.md) has the
+> "laptop vs cloud" table + which scenarios each enables.
 
 > **What Loamss is.** A substrate that your apps and AI tools write
 > to and read from over MCP. The long-term shape is **native Loamss
@@ -149,149 +155,20 @@ for everything below.
 
 ---
 
-## 3b. First run on a cloud host (Cloud Run, Fly, GKE)
+## 3b. Running on a cloud host instead of a laptop?
 
-If you're running Loamss on a public-internet URL instead of your
-laptop, you need one extra step before opening the wizard: **the
-setup token**.
+This doc walks the laptop path. If you want Loamss reachable from
+a public URL (Cloud Run / Fly / GKE / Render), the full guide is
+in [`deploying.md`](deploying.md): one-shot script
+`./deploy/cloud-run.sh`, Postgres backing, setup-token gate on
+`/console/*` and `/pair`, cold-start-safe consumption marker.
 
-The threat model: when the runtime binds to `0.0.0.0:$PORT` (the
-default in the cloud profile), `/console/*` is reachable from
-anywhere. The first person to hit the wizard could install
-capsules, pair credentials, and take over the instance. The setup
-token closes that hole — it's a one-time bearer token, generated at
-startup, that you (the operator) prove possession of before the
-wizard accepts your config.
+The wizard itself is the same — the runtime injects a setup token
+into the URL (`?setup=<token>`) and the console captures it
+transparently. After init, the wizard behaves identically to the
+flow described below.
 
-### Where the gate turns on
-
-| Scenario                                                              | Gate active? |
-| --------------------------------------------------------------------- | ------------ |
-| `loamss start` on your laptop (`127.0.0.1`)                           | no           |
-| `LOAMSS_PROFILE=cloud loamss start`                                   | yes          |
-| Running inside Cloud Run / Fly / GKE / Render (auto-detected `cloud`) | yes          |
-| `LOAMSS_SETUP_TOKEN=<value> loamss start` anywhere                    | yes          |
-
-When the gate is active, every `/console/*` request and the `/pair`
-endpoint require `Authorization: Bearer <token>`. `/healthz` and
-`/version` stay public so your load balancer's health checks
-continue to work.
-
-### Step 1 — find your setup token
-
-When the runtime boots in cloud profile without `LOAMSS_SETUP_TOKEN`
-set, it generates a fresh one and prints it once to standard
-output. Search your logs for the banner:
-
-```
-  ↪  Setup token: 6f4c8e5a91...
-     Provide it as Authorization: Bearer <token> on the first
-     /console/init request. The token is single-use; subsequent
-     access requires a paired-client credential.
-```
-
-Sample one-liners for the common platforms:
-
-```bash
-# Cloud Run
-gcloud run services logs read <service-name> | grep "Setup token:" | head -1
-
-# Fly.io
-fly logs | grep "Setup token:" | head -1
-
-# Kubernetes / GKE
-kubectl logs <pod> | grep "Setup token:" | head -1
-```
-
-If you'd rather supply the token yourself (so it doesn't appear in
-log aggregation), set `LOAMSS_SETUP_TOKEN` in your deploy
-configuration. The runtime uses your value verbatim, never logs it,
-and the gate behaves identically.
-
-### Step 2 — open the wizard with the token
-
-The fastest path is a `?setup=` URL parameter. Build it once and
-click:
-
-```
-https://your-loamss.example.com/?setup=6f4c8e5a91...
-```
-
-The console reads the parameter on first paint, stashes the token in
-your browser's `localStorage`, and strips the parameter from the
-address bar (so the URL in your history is just
-`https://your-loamss.example.com/`). From this point the wizard
-behaves identically to the laptop flow.
-
-If you've already opened the URL without the parameter — say you
-typed it from memory — the Welcome screen shows a small
-**"Cloud deploy? Paste your setup token."** link. Click it, paste,
-proceed.
-
-### Step 3 — complete the wizard
-
-The wizard form is unchanged from the laptop flow. When you click
-**Finish**, the console sends `Authorization: Bearer <token>` along
-with the wizard's payload to `/console/init`. The runtime writes
-your config, burns the token, and records two entries in the audit
-log:
-
-```bash
-loamss audit log --type setup_token.issued --type setup_token.consumed
-```
-
-You should see exactly one of each. From now on the setup token is
-no longer accepted — the runtime persists this fact to
-`<data_dir>/.setup-consumed` so a restart or cold-start doesn't
-re-open the gate.
-
-### Step 4 — pair your first real client
-
-The dashboard polls `/console/state`, which is still gated. Since
-the setup token is gone, you need to pair a real client (Claude
-Desktop, the CLI, a custom MCP tool) and use its bearer credential.
-
-The simplest path: SSH or `kubectl exec` into the running instance
-once and use the CLI from there.
-
-```bash
-loamss client pair --name "operator"
-# → pairing code: ABCD-1234
-loamss client pair complete ABCD-1234
-# → bearer: a long opaque string — keep it safe
-```
-
-Paste that bearer into your dashboard's `localStorage` under the
-key `loamss.client_bearer` (a follow-up release will add a paste
-field on the dashboard itself; for v0.2 it's a manual step). Reload
-the dashboard — it polls cleanly.
-
-### Re-opening the wizard
-
-The consumption marker lives in two places — a row in the runtime
-DB (the durable source of truth, the only one that survives Cloud
-Run cold starts) and, on laptop installs upgraded from
-v0.2.0-alpha.1, a sentinel file. Clearing both is the only way to
-re-open the wizard.
-
-```bash
-# On Cloud Run / Fly / any cloud deploy (Postgres-backed runtime DB):
-psql "$LOAMSS_DATABASE_URL" \
-  -c "DELETE FROM runtime_state WHERE key = 'setup_token_consumed';"
-
-# On laptop installs (SQLite runtime.db):
-sqlite3 ~/.loamss/runtime.db \
-  "DELETE FROM runtime_state WHERE key = 'setup_token_consumed';"
-rm -f ~/.loamss/.setup-consumed  # back-compat file, only present if upgraded
-
-# Then restart the instance:
-#   Cloud Run: gcloud run services update-traffic <svc> --to-latest
-#   Fly:       fly machine restart <id>
-#   laptop:    loamss start
-```
-
-The next start generates a fresh setup token. The previous token
-stays invalid.
+Back to the laptop walkthrough →
 
 ---
 

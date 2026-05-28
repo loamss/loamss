@@ -6,6 +6,11 @@ on your own machine — that's covered in
 [`getting-started.md`](getting-started.md). This doc is the cloud
 equivalent.
 
+> **Not sure cloud is the right fit?** Read
+> [`use-cases.md`](use-cases.md) first — it covers the laptop vs
+> cloud tradeoff and walks you through what each setup actually
+> enables.
+
 > **Status (v0.2.0-alpha):** Cloud Run is the path with a working
 > deploy script (`deploy/cloud-run.sh`) and the smoke test that
 > closed the cold-start bug (commit 7d162b6). Fly.io, GKE, and

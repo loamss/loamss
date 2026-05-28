@@ -175,9 +175,16 @@ See [`ROADMAP.md`](ROADMAP.md) for the phased plan.
 
 ---
 
-## Try it locally
+## Try it
 
-For the full walkthrough (install → wizard → first source → first query → external MCP client), see [`docs/getting-started.md`](docs/getting-started.md). The short version:
+Two setup paths:
+
+- **Laptop** (`brew install` → wizard, 10 min, $0) — see below for the short version or [`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough.
+- **Cloud Run** (one-shot script → public URL behind a setup-token gate, 15-20 min, ~$15-20/month) — see [`docs/deploying.md`](docs/deploying.md). Verified end-to-end against Google Cloud in commit `23a871c`.
+
+The connective tissue — *which path makes sense for what you want to do, and what you do after install* — lives in [`docs/use-cases.md`](docs/use-cases.md).
+
+### Laptop, the short version
 
 ### Homebrew (macOS + Linux)
 
@@ -232,7 +239,7 @@ Three things to try once you're in:
 
 **Curious**: this README → [`scenarios.md`](scenarios.md) → [`ROADMAP.md`](ROADMAP.md).
 
-**Trying it**: [`docs/getting-started.md`](docs/getting-started.md) — install, first run, first source, first query.
+**Trying it**: [`docs/use-cases.md`](docs/use-cases.md) is the connective tissue — picks the right setup path (laptop vs cloud) and walks the five things you do after. Drills down into [`docs/getting-started.md`](docs/getting-started.md) (laptop install) or [`docs/deploying.md`](docs/deploying.md) (cloud), then [`docs/connect-your-app.md`](docs/connect-your-app.md), [`docs/setup-gmail.md`](docs/setup-gmail.md), etc.
 
 **Building a capsule**: [`docs/build-your-first-capsule.md`](docs/build-your-first-capsule.md) → [`capsule-spec.md`](capsule-spec.md) → the TypeScript SDK at [`sdk/typescript/`](sdk/typescript/). For ingestor capsules specifically: [`docs/capsule-ingestor-primitives.md`](docs/capsule-ingestor-primitives.md).
 
