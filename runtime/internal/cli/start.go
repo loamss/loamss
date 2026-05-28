@@ -32,6 +32,7 @@ import (
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/capsule"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	memlayer "github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/oauth"
@@ -77,10 +78,22 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		"listen_addr", cfg.Runtime.ListenAddr,
 	)
 
-	// Open the permission store + audit writer; both live for the
-	// runtime's full lifetime and are shared with the MCP handler.
 	ctx := cmd.Context()
-	store, err := permission.Open(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+
+	// Open one Database handle that all subsystem stores share.
+	// Pre-W2.2, each of permission / source / capsule / memory_layer
+	// / oauth opened its own *sql.DB against the same runtime.db
+	// SQLite file — wasteful (5 connection pools to one file) and
+	// not workable on Postgres where each open would land on a
+	// different connection. Now they all share one *database.DB
+	// via the *Store.OpenWith constructors.
+	runtimeDB, err := database.OpenSQLite(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	if err != nil {
+		return fmt.Errorf("opening runtime.db: %w", err)
+	}
+	defer func() { _ = runtimeDB.Close() }()
+
+	store, err := permission.OpenWith(ctx, runtimeDB)
 	if err != nil {
 		return fmt.Errorf("opening permission store: %w", err)
 	}
@@ -109,7 +122,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// from the metadata sources write. Its own SQLite tables live in
 	// runtime.db; opening here lets MCP tools (entities.*, threads.*)
 	// share the same Layer instance the source CLI writes through.
-	memLayerStore, err := memlayer.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	memLayerStore, err := memlayer.OpenStoreWith(ctx, runtimeDB)
 	if err != nil {
 		return fmt.Errorf("opening memory layer store: %w", err)
 	}
@@ -206,7 +219,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// registry under <capsule>.<tool> names. Capsule callbacks
 	// (capsule → runtime) flow through a stub handler today;
 	// permission-checked dispatch lands in the next commit.
-	capStore, err := capsule.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	capStore, err := capsule.OpenStoreWith(ctx, runtimeDB)
 	if err != nil {
 		return fmt.Errorf("opening capsule store: %w", err)
 	}
@@ -231,7 +244,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// own open) so /console/state can list configured sources. Both
 	// opens point at the same SQLite file; sqlite handles concurrent
 	// readers and the writer mutex sits inside the store itself.
-	srcStore, err := source.OpenStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	srcStore, err := source.OpenStoreWith(ctx, runtimeDB)
 	if err != nil {
 		return fmt.Errorf("opening source store: %w", err)
 	}
@@ -268,7 +281,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// loopback listener on the runtime's behalf, and exchanges
 	// codes for tokens. Tokens land in the per-capsule credential
 	// blob (above), keyed under "oauth.access_token" etc.
-	oauthClients, err := oauth.OpenClientStore(ctx, filepath.Join(cfg.Runtime.DataDir, "runtime.db"))
+	oauthClients, err := oauth.OpenClientStoreWith(ctx, runtimeDB)
 	if err != nil {
 		return fmt.Errorf("opening oauth client store: %w", err)
 	}
