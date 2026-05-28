@@ -97,34 +97,72 @@ the contract?" should be answerable from your own substrate.
 
 **How.**
 
-1. **Dashboard:** Apps pane → `+ Pair an app`. Give it a name
-   ("Claude Desktop"). Hit Generate. You get a 4-letter pairing
-   code like `ABCD-1234`, valid for 10 minutes.
+The runtime exposes MCP over HTTP+SSE at `/mcp`. Claude Desktop
+launches stdio subprocesses for its MCP servers, so we connect
+them through a community proxy called
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote) that
+translates Claude's stdio expectations into HTTP+SSE calls.
 
-2. **Claude Desktop config:** Open
+1. **Mint a pairing code** (laptop terminal, or dashboard → Apps
+   pane → `+ Pair an app`):
+
+   ```bash
+   loamss client pair --name "Claude Desktop"
+   # → code: 5QUK-5EPE (valid 10 minutes)
+   ```
+
+2. **Redeem it for a bearer** (prints exactly once — copy now):
+
+   ```bash
+   loamss client pair complete 5QUK-5EPE
+   # → ✓ Paired client "Claude Desktop" (cli-01KSDHEJG...)
+   #   Bearer credential: loamss_eyJraWQ...long.opaque.string
+   ```
+
+3. **Issue at least one capability grant** so Claude can do
+   something. For reading memory:
+
+   ```bash
+   loamss grant create \
+     --principal-kind client \
+     --principal-id cli-01KSDHEJG... \
+     --capability memory.read
+   ```
+
+4. **Edit Claude Desktop's config** at
    `~/Library/Application Support/Claude/claude_desktop_config.json`
-   and add:
+   (macOS) or `%APPDATA%\Claude\claude_desktop_config.json`
+   (Windows). Create the file if it doesn't exist:
 
    ```json
    {
      "mcpServers": {
        "my-loamss": {
-         "command": "loamss",
-         "args": ["mcp", "stdio", "--server", "http://127.0.0.1:7777"]
+         "command": "npx",
+         "args": [
+           "-y",
+           "mcp-remote",
+           "http://127.0.0.1:7777/mcp",
+           "--header",
+           "Authorization: Bearer loamss_eyJraWQ...your.full.bearer"
+         ]
        }
      }
    }
    ```
 
-   For cloud deploys, the URL is your Cloud Run service URL. You
-   also need to redeem the code first to get a bearer token — see
-   [`connect-your-app.md`](connect-your-app.md) for the full
-   pairing handshake.
+   For Cloud Run deploys, replace `http://127.0.0.1:7777` with
+   your service URL (`https://loamss-...run.app`).
 
-3. **Restart Claude Desktop.** It re-reads the config and picks
-   up your Loamss as an MCP server. In a new conversation, Claude
-   sees tools like `memory.query`, `entities.list`, and any
-   capsule tools you've installed.
+5. **Fully quit and reopen Claude Desktop.** It re-reads the
+   config and spawns `npx -y mcp-remote ...` on first launch
+   (the proxy is cached after the first fetch).
+
+6. **Verify.** In a new conversation, ask Claude
+   *"what tools do you have available from my-loamss?"* It should
+   list `memory.query` (plus whatever else your grants allow).
+   Watch `loamss audit log --actor-kind client` for the call
+   records.
 
 **What this gets you.** A scoped, audited bridge between Claude
 and your Loamss. Every tool call is logged in
