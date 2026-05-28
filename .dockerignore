@@ -1,0 +1,48 @@
+# Don't ship build state in the Docker context — keeps the COPY
+# fast and prevents stale local artifacts from poisoning the image.
+
+# Build outputs
+runtime/bin/
+runtime/internal/console/dist/
+console/.next/
+console/out/
+console/node_modules/
+
+# Local state
+.env
+.env.*
+!.env.example
+.secrets
+*.pem
+*.key
+data/
+.loamss/
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
+*.swo
+*.swp
+*~
+
+# Git metadata — saves megabytes when COPY would otherwise drag in
+# the whole .git history.
+.git
+.gitignore
+.gitattributes
+
+# CI / docs that don't belong in the image
+.github/
+.cache/
+docs/screenshots/
+docs/wireframes/
+
+# Test fixtures larger than a few KB
+**/testdata/large_*
+
+# Node tooling that the Go build doesn't need
+sdk/typescript/node_modules/
+sdk/typescript/dist/
+sdk/python/.venv/
+sdk/python/__pycache__/
