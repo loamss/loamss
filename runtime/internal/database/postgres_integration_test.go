@@ -2,7 +2,10 @@ package database_test
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +19,71 @@ import (
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
+
+// --- multi-process worker reentry ------------------------------------------
+//
+// TestMain doubles as the worker entrypoint when the multi-process test
+// invokes the test binary again with childMarkerEnv set. Keeps everything
+// in one file — no separate worker binary to build or maintain.
+
+const (
+	childMarkerEnv = "LOAMSS_AUDIT_MP_DSN"
+	childCountEnv  = "LOAMSS_AUDIT_MP_COUNT"
+	childIDEnv     = "LOAMSS_AUDIT_MP_WORKER_ID"
+)
+
+func TestMain(m *testing.M) {
+	if dsn := os.Getenv(childMarkerEnv); dsn != "" {
+		runAuditWorker(dsn)
+		return
+	}
+	os.Exit(m.Run())
+}
+
+// runAuditWorker is the child-process body for the multi-process
+// concurrency test. Opens an audit.Store against the supplied DSN and
+// appends LOAMSS_AUDIT_MP_COUNT entries. Exits 0 on success.
+// envIntDefault returns the integer parse of an env var, or the
+// default if unset/invalid. Used for stress-tunable knobs.
+func envIntDefault(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+func runAuditWorker(dsn string) {
+	count, err := strconv.Atoi(os.Getenv(childCountEnv))
+	if err != nil || count <= 0 {
+		fmt.Fprintf(os.Stderr, "worker: invalid %s=%q\n", childCountEnv, os.Getenv(childCountEnv))
+		os.Exit(2)
+	}
+	workerID := os.Getenv(childIDEnv)
+
+	ctx := context.Background()
+	store, err := audit.OpenPostgres(ctx, dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "worker %s: OpenPostgres: %v\n", workerID, err)
+		os.Exit(3)
+	}
+	defer func() { _ = store.Close(ctx) }()
+
+	for i := 0; i < count; i++ {
+		_, err := store.Append(ctx, audit.Entry{
+			Type:    "test.multiprocess",
+			Actor:   audit.Actor{Kind: audit.ActorRuntime, ID: "worker-" + workerID},
+			Outcome: audit.OutcomeSuccess,
+			Data:    map[string]any{"i": i, "worker": workerID},
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "worker %s: append #%d: %v\n", workerID, i, err)
+			os.Exit(4)
+		}
+	}
+	os.Exit(0)
+}
 
 // Integration tests for the Postgres backend. Lives in its own _test
 // package so it can import the subsystem stores without creating
@@ -305,6 +373,134 @@ func TestIntegration_Audit_ConcurrentAppendsChainIntact(t *testing.T) {
 	}
 	if r.EntriesChecked != N {
 		t.Errorf("expected %d entries checked, got %d", N, r.EntriesChecked)
+	}
+}
+
+// TestIntegration_Audit_MultiProcessConcurrentAppends proves that
+// pg_advisory_xact_lock serializes Append across separate OS processes
+// — the actual claim the Postgres backend makes. The single-process
+// goroutine test above only exercises in-process serialization, which
+// is also covered by the sync.Mutex; the advisory lock matters when
+// the runtime daemon and a CLI invocation (separate binaries) write
+// concurrently.
+//
+// Mechanism: spawns N child processes via os.Executable() with the
+// magic env var that triggers TestMain's worker path. Each child
+// opens its own audit.Store against a per-test schema (passed via
+// the search_path runtime parameter on the DSN) and appends K
+// entries. After all children exit, parent verifies the chain.
+//
+// Schema isolation rationale: search_path encoded in the DSN is the
+// only way to propagate freshSchema()'s per-test isolation across
+// process boundaries — children can't inherit the parent's connection
+// state.
+func TestIntegration_Audit_MultiProcessConcurrentAppends(t *testing.T) {
+	dsn := integrationDSN(t)
+	db := openPg(t)
+	schema := strings.NewReplacer("/", "_", " ", "_", "-", "_").Replace(t.Name())
+	schema = "loamss_test_" + schema
+
+	// The audit schema needs to exist before children spin up. The
+	// parent's OpenWith creates audit_entries inside the per-test
+	// schema courtesy of freshSchema's SET search_path.
+	parent, err := audit.OpenWith(context.Background(), db)
+	if err != nil {
+		t.Fatalf("audit.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = parent.Close(context.Background()) })
+
+	// Build the child DSN with search_path encoded. pgx forwards
+	// unknown query params as runtime parameters, so every connection
+	// in the child's pool sets search_path on startup. Verified above.
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	childDSN := dsn + sep + "search_path=" + schema
+
+	// Defaults sized for a fast laptop loop. Override via env vars
+	// for heavier contention runs (e.g., against Cloud SQL).
+	numWorkers := envIntDefault("LOAMSS_AUDIT_MP_NUM_WORKERS", 6)
+	entriesPerChild := envIntDefault("LOAMSS_AUDIT_MP_ENTRIES_PER_CHILD", 20)
+	totalExpected := numWorkers * entriesPerChild
+
+	exePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	cmds := make([]*exec.Cmd, numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		cmd := exec.Command(exePath)
+		cmd.Env = append(os.Environ(),
+			childMarkerEnv+"="+childDSN,
+			childCountEnv+"="+strconv.Itoa(entriesPerChild),
+			childIDEnv+"="+strconv.Itoa(i),
+		)
+		// Don't inherit `-test.run=...` etc. — TestMain's child path
+		// runs the worker and exits before m.Run() so flag parsing
+		// never happens. But to be safe against future TestMain
+		// changes, scrub test-related stdio capture.
+		cmd.Stderr = os.Stderr
+		cmds[i] = cmd
+	}
+
+	// Start all children, then wait. The intent is a thundering herd
+	// — N processes contending for the advisory lock at once.
+	for i, cmd := range cmds {
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start worker %d: %v", i, err)
+		}
+	}
+	for i, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("worker %d failed: %v", i, err)
+		}
+	}
+
+	// Parent reopens its own view of the store to make sure the
+	// authoritative chain head matches what's persisted (the parent's
+	// in-memory lastHash/lastID was last updated at parent open time
+	// before any child wrote anything).
+	store, err := audit.OpenWith(context.Background(), db)
+	if err != nil {
+		t.Fatalf("audit.OpenWith (post-children): %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
+
+	ctx := context.Background()
+	entries, err := store.Query(ctx, audit.Filter{Limit: totalExpected + 10})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(entries) != totalExpected {
+		t.Fatalf("expected %d entries from %d workers × %d each, got %d",
+			totalExpected, numWorkers, entriesPerChild, len(entries))
+	}
+
+	r, err := store.Verify(ctx)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !r.Valid {
+		t.Fatalf("multi-process appends broke the chain: %+v", r)
+	}
+	if r.EntriesChecked != int64(totalExpected) {
+		t.Errorf("verify checked %d entries, expected %d", r.EntriesChecked, totalExpected)
+	}
+
+	// Sanity: every worker should have contributed entriesPerChild
+	// entries. Detects a scenario where one worker silently lost
+	// rows due to advisory-lock contention bugs.
+	perWorker := make(map[string]int)
+	for _, e := range entries {
+		perWorker[e.Actor.ID]++
+	}
+	for i := 0; i < numWorkers; i++ {
+		id := "worker-" + strconv.Itoa(i)
+		if perWorker[id] != entriesPerChild {
+			t.Errorf("worker %s wrote %d entries, expected %d", id, perWorker[id], entriesPerChild)
+		}
 	}
 }
 
