@@ -174,6 +174,25 @@ call.
 your own script — each pairs independently with its own bearer
 credential. Same memory, different scopes, separate audit trails.
 
+#### On cloud deploys
+
+The Claude Desktop config (step 4) is identical — just swap
+`http://127.0.0.1:7777/mcp` for your Cloud Run service URL.
+
+But there's an **active rough edge** on cloud deploys for getting
+the bearer in the first place: after `/console/init` burns the
+setup token, you have no paired-client credentials yet, and
+`+ Pair an app` in the dashboard is gated by the same paired-client
+requirement. Today's workaround is to use psql against your
+Cloud SQL to clear the consumption marker, restart the revision,
+and use a fresh setup token to generate + redeem a pairing code
+via HTTP. The cleaner fix — automatically pairing a "console"
+client during `/console/init` and surfacing its bearer to the
+wizard — is alpha.3 work tracked in `ROADMAP.md`.
+
+For now, the laptop flow above is the reliable path; cloud is
+operator-friendly for everything *except* this one bootstrap step.
+
 Detail: [`docs/connect-your-app.md`](connect-your-app.md).
 
 ---

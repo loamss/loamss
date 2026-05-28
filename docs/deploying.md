@@ -249,6 +249,66 @@ against a real multi-replica deployment.
 
 ---
 
+## Known rough edge: bootstrapping the first paired client
+
+After `/console/init` burns the setup token (commit `3088e16`,
+verified end-to-end against Cloud Run in commit `23a871c`), the gate
+on `/console/*` and `/pair` accepts only paired-client credentials.
+
+But your operator has no paired-client credential yet — the wizard
+just used the setup token, which is now consumed. So `+ Pair an
+app` in the dashboard 401s, and you can't redeem a pairing code
+because `/pair` also 401s.
+
+The clean fix is alpha.3 work: `/console/init` will mint a
+"console" paired client as part of completing the wizard and
+return its bearer in the response. The console wizard captures
+that bearer and uses it for subsequent `/console/*` calls. After
+this, "+ Pair an app" works because you're already authenticated
+as the console client.
+
+**Until that ships,** the workaround is psql + restart:
+
+```bash
+# 1. Connect to Cloud SQL (needs Cloud SQL Auth Proxy on your laptop)
+psql "$DSN" -c "DELETE FROM runtime_state WHERE key = 'setup_token_consumed';"
+
+# 2. Restart the Cloud Run revision so the gate re-opens
+gcloud run services update loamss \
+  --project=$PROJECT_ID --region=$REGION \
+  --update-labels="reset=$(date +%s)"
+
+# 3. Read the fresh token from logs
+gcloud run services logs read loamss --region=$REGION | grep "Setup token:"
+
+# 4. Generate + redeem a pairing code via curl (gate accepts the
+#    fresh setup token until the next /console/init consumes it)
+TOKEN="<fresh-token>"
+URL="https://your-service.run.app"
+
+curl -X POST "$URL/console/clients/pair" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"client_name":"Claude Desktop"}'
+# → {"code":"5QUK-5EPE", ...}
+
+curl -X POST "$URL/pair" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"5QUK-5EPE","metadata":{"app":"claude"}}'
+# → {"token":"loamss_eyJ...", ...}
+```
+
+The `loamss_...` bearer is what goes into Claude Desktop's
+`claude_desktop_config.json` — see
+[`use-cases.md`](use-cases.md) step 4 of the Claude pairing flow.
+
+You only need to do this once; the paired-client bearer is
+durable across cold starts (paired clients live in `runtime.db`
+the same way the consumed-state marker does).
+
+---
+
 ## What the gate looks like, end to end
 
 A cloud deploy with the gate active. The numbers below correspond
