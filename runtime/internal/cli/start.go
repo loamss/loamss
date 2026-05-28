@@ -436,7 +436,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// listening. The bind is synchronous + fast (<10ms typical) so
 	// by the time the user has read the banner, ListenAndServe is
 	// already accepting connections.
-	printStartBanner(cmd.OutOrStdout(), cfg, consoleConfigPath, startAutoOpen)
+	printStartBanner(cmd.OutOrStdout(), cfg, consoleConfigPath, det.Profile, setupGate != nil && setupGate.Active(), startAutoOpen)
 
 	stop := installSignalTrap(logger)
 	return runServer(srv, stop, startShutdownTimeout, logger)
@@ -451,7 +451,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 // When --open is set we also fire the browser launcher; failures
 // log a warning but don't block startup (the banner already showed
 // the URL, the user can navigate manually).
-func printStartBanner(w io.Writer, cfg *config.Config, configPath string, autoOpen bool) {
+func printStartBanner(w io.Writer, cfg *config.Config, configPath string, prof profile.Profile, gateActive bool, autoOpen bool) {
 	url := consoleURLFromListenAddr(cfg.Runtime.ListenAddr)
 	firstRun := !configFileExists(configPath)
 
@@ -460,6 +460,12 @@ func printStartBanner(w io.Writer, cfg *config.Config, configPath string, autoOp
 		// so we don't have to align a right edge that varies with
 		// terminal character widths (em-dash, etc.). The blank lines
 		// give the URL room to breathe.
+		//
+		// The perimeter line is profile-aware: on laptop installs the
+		// 127.0.0.1 binding IS the perimeter; on cloud installs the
+		// setup-token gate is. Mis-claiming "127.0.0.1 only" on a
+		// cloud deploy would mislead the operator into thinking the
+		// URL is private — it isn't.
 		_, _ = fmt.Fprint(w, "\n")
 		_, _ = fmt.Fprintln(w, "  │")
 		_, _ = fmt.Fprintln(w, "  │  Loamss is starting up — first run.")
@@ -468,8 +474,14 @@ func printStartBanner(w io.Writer, cfg *config.Config, configPath string, autoOp
 		_, _ = fmt.Fprintln(w, "  │")
 		_, _ = fmt.Fprintf(w, "  │      %s\n", url)
 		_, _ = fmt.Fprintln(w, "  │")
-		_, _ = fmt.Fprintln(w, "  │  Bound to 127.0.0.1 only. Nothing external reaches it")
-		_, _ = fmt.Fprintln(w, "  │  until you grant something. Press Ctrl-C to stop.")
+		if prof == profile.Cloud || gateActive {
+			_, _ = fmt.Fprintln(w, "  │  Cloud profile: setup-token gate active on /console/*")
+			_, _ = fmt.Fprintln(w, "  │  and /pair. Look above for 'Setup token:' and append")
+			_, _ = fmt.Fprintln(w, "  │  ?setup=<token> to the URL on first open.")
+		} else {
+			_, _ = fmt.Fprintln(w, "  │  Bound to 127.0.0.1 only. Nothing external reaches it")
+			_, _ = fmt.Fprintln(w, "  │  until you grant something. Press Ctrl-C to stop.")
+		}
 		_, _ = fmt.Fprintln(w, "  │")
 		_, _ = fmt.Fprint(w, "\n")
 	} else {

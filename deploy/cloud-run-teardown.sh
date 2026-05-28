@@ -78,10 +78,17 @@ fi
 
 if [ "${DELETE_IMAGES:-0}" = "1" ]; then
   echo "==> Deleting container images under gcr.io/$PROJECT_ID/loamss"
+  # gcloud's `--format="value(digest)"` emits the digest *without* the
+  # "sha256:" prefix, but `images delete` requires that prefix. Add it
+  # back at the call site.
   for digest in $(gcloud container images list-tags \
       "gcr.io/$PROJECT_ID/loamss" \
       --project="$PROJECT_ID" \
       --format="value(digest)" 2>/dev/null); do
+    case "$digest" in
+      sha256:*) ;;
+      *) digest="sha256:$digest" ;;
+    esac
     gcloud container images delete "gcr.io/$PROJECT_ID/loamss@$digest" \
       --project="$PROJECT_ID" \
       --force-delete-tags \

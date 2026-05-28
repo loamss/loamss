@@ -294,6 +294,36 @@ project, not for end-users.
 
 ---
 
+## Known platform quirks
+
+### Cloud Run intercepts `/healthz` at the GFE
+
+Verified end-to-end during a live deploy (commit 08fccd0 against
+`marketplace-487603`): Google's frontend serves a 404 page for the
+paths `/healthz`, `/health`, `/readyz`, and `/robots.txt` on the
+default `*.run.app` URLs. These requests **never reach our
+container**.
+
+The Loamss runtime's `/healthz` handler IS registered and works
+fine locally (`docker run` smoke test) and through any non-`run.app`
+ingress (custom domain on Cloud Run, a load balancer in front, GKE
+ClusterIP). It's only the public default URL that strips them.
+
+Implication: don't point an external uptime monitor at
+`https://<svc>.run.app/healthz` expecting our handler. Use one of:
+
+- `/version` — also always public, returns the runtime's version
+  string. Confirmed reachable through the GFE.
+- A custom domain mapped to the Cloud Run service. Custom domains
+  bypass the path-stripping behavior.
+- An internal monitor inside the VPC.
+
+Cloud Run's own startup health-check is a TCP probe on the
+container port, not an HTTP probe — so this quirk doesn't affect
+the platform's own liveness/readiness signal.
+
+---
+
 ## Troubleshooting
 
 ### Wizard 401s even with the token
