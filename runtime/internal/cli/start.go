@@ -381,6 +381,15 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		consoleConfigPath = config.DefaultPath()
 	}
 
+	// Setup-token gate. Active in cloud profile (default) or when
+	// LOAMSS_SETUP_TOKEN is set explicitly (operator pre-generated
+	// the token). Inactive in local profile with no explicit token
+	// — laptop installs keep the historical localhost-only contract.
+	setupGate, err := resolveSetupTokenGate(det.Profile, cfg.Runtime.DataDir, engine, logger)
+	if err != nil {
+		return fmt.Errorf("resolving setup token: %w", err)
+	}
+
 	srv := server.New(server.Options{
 		Addr:           cfg.Runtime.ListenAddr,
 		Logger:         logger,
@@ -400,6 +409,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 			SetIngestorBridge(newDaemonIngestorBridge(srcStore, credsStore, cursorStore)),
 		OAuthClients:  oauthClients,
 		OAuthBeginner: oauthBridge,
+		SetupToken:    setupGate,
 		// ReloadLog: hot-swap the daemon's slog handler when the
 		// wizard writes a config with new log.level / log.format.
 		// Subsystems with their own logger refs (engine, audit,

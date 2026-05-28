@@ -137,6 +137,18 @@ type Options struct {
 	// when nil the endpoint returns 503. Wired by cli/start.go to
 	// daemonOAuthBridge.BeginAuthFlow.
 	OAuthBeginner OAuthBeginner
+
+	// SetupToken, when non-nil and active, gates the /console/* and
+	// /pair routes behind a Bearer credential (the setup token until
+	// consumed, then paired-client credentials only). Constructed in
+	// cli/start.go based on the resolved deployment profile and the
+	// LOAMSS_SETUP_TOKEN env var.
+	//
+	// Nil (or a gate where Active() == false) preserves the legacy
+	// localhost-only contract for laptop installs: the routes are
+	// mounted unauthenticated, and the listener binding to 127.0.0.1
+	// provides the perimeter.
+	SetupToken *SetupTokenGate
 }
 
 // OAuthBeginner is the narrow surface /console/oauth/begin needs.
@@ -199,6 +211,11 @@ type Server struct {
 	// (POST /console/oauth/begin). nil → 503.
 	oauthBeginner OAuthBeginner
 
+	// setupToken gates /console/* and /pair on cloud deploys. nil
+	// (or inactive) means the routes are mounted unauthenticated and
+	// rely on the listener's localhost binding for perimeter.
+	setupToken *SetupTokenGate
+
 	// startedAt is the process start time, used to compute the
 	// runtime uptime advertised in /console/state.
 	startedAt time.Time
@@ -228,6 +245,7 @@ func New(opts Options) *Server {
 		reloadLog:        opts.ReloadLog,
 		oauthClients:     opts.OAuthClients,
 		oauthBeginner:    opts.OAuthBeginner,
+		setupToken:       opts.SetupToken,
 		startedAt:        time.Now().UTC(),
 	}
 
@@ -235,70 +253,72 @@ func New(opts Options) *Server {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /version", s.handleVersion)
 
+	// gate wraps a handler with the setup-token middleware when active,
+	// and is a pass-through otherwise. Use it for every /console/* and
+	// /pair handler — the gate is the single chokepoint that decides
+	// whether cloud-exposed routes require a Bearer credential.
+	//
+	// Local profile (gate nil/inactive): routes are mounted bare and
+	// rely on the 127.0.0.1 binding for perimeter — the historical
+	// laptop contract.
+	gate := func(h http.HandlerFunc) http.Handler {
+		if s.setupToken.Active() {
+			return s.setupToken.Middleware(h)
+		}
+		return h
+	}
+
 	// /console/init — accepts the first-run wizard's collected config
-	// and (eventually) writes it to disk. v0.1 ships as a stub that
-	// echoes back the payload + acknowledges receipt; full config-file
-	// writing lands in the next commit. Restricted to localhost via the
-	// listener binding (the runtime defaults to 127.0.0.1); the
-	// endpoint takes no auth because the wizard runs before any client
-	// has been paired.
-	mux.HandleFunc("POST /console/init", s.handleConsoleInit)
+	// and writes it to disk. On cloud deploys the route is gated by
+	// the setup token (until consumed) or a paired-client credential.
+	// On laptop installs the legacy localhost-only contract holds.
+	mux.Handle("POST /console/init", gate(s.handleConsoleInit))
 
 	// /console/state — read-only snapshot the dashboard reads on
-	// load + refresh. Same unauthenticated-localhost contract as
-	// /console/init: the runtime defaults to binding 127.0.0.1 only,
-	// and the dashboard runs in the same browser session the user
-	// just used to write the config — no token to negotiate.
-	mux.HandleFunc("GET /console/state", s.handleConsoleState)
+	// load + refresh. Gated identically to /console/init: on cloud,
+	// requires the setup token or a paired-client credential; on
+	// laptop, relies on the listener's localhost binding.
+	mux.Handle("GET /console/state", gate(s.handleConsoleState))
 
-	// Sources CRUD under /console/sources. Same localhost contract.
-	// The dashboard mutates sources directly; the CLI's `loamss
-	// source ...` commands write through the same SQLite store, so
-	// either path reflects in the other on the next /console/state
-	// poll.
-	mux.HandleFunc("POST /console/sources", s.handleSourceAdd)
-	mux.HandleFunc("POST /console/sources/{name}/sync", s.handleSourceSync)
-	mux.HandleFunc("DELETE /console/sources/{name}", s.handleSourceDelete)
+	// Sources CRUD under /console/sources.
+	mux.Handle("POST /console/sources", gate(s.handleSourceAdd))
+	mux.Handle("POST /console/sources/{name}/sync", gate(s.handleSourceSync))
+	mux.Handle("DELETE /console/sources/{name}", gate(s.handleSourceDelete))
 
-	// Capsules CRUD + lifecycle under /console/capsules. Mutations
-	// share the source endpoints' localhost contract: the runtime
-	// binds 127.0.0.1 by default, and the dashboard runs in the
-	// browser session the user opened it from. No bearer auth.
-	mux.HandleFunc("POST /console/capsules", s.handleCapsuleInstall)
-	mux.HandleFunc("DELETE /console/capsules/{name}", s.handleCapsuleUninstall)
-	mux.HandleFunc("POST /console/capsules/{name}/start", s.handleCapsuleStart)
-	mux.HandleFunc("POST /console/capsules/{name}/stop", s.handleCapsuleStop)
+	// Capsules CRUD + lifecycle.
+	mux.Handle("POST /console/capsules", gate(s.handleCapsuleInstall))
+	mux.Handle("DELETE /console/capsules/{name}", gate(s.handleCapsuleUninstall))
+	mux.Handle("POST /console/capsules/{name}/start", gate(s.handleCapsuleStart))
+	mux.Handle("POST /console/capsules/{name}/stop", gate(s.handleCapsuleStop))
 
-	// Approval workflow. The runtime holds capability checks that
-	// resolve to "needs human OK" in a pending state; these
-	// endpoints are how the user makes a decision from the
-	// dashboard. The design's most important surface — making it
-	// one-click was the point of the dashboard.
-	mux.HandleFunc("POST /console/approvals/{id}/approve", s.handleApprovalApprove)
-	mux.HandleFunc("POST /console/approvals/{id}/deny", s.handleApprovalDeny)
+	// Approval workflow.
+	mux.Handle("POST /console/approvals/{id}/approve", gate(s.handleApprovalApprove))
+	mux.Handle("POST /console/approvals/{id}/deny", gate(s.handleApprovalDeny))
 
-	// Apps (paired clients). The dashboard generates pairing
-	// codes via /console/clients/pair and revokes via DELETE.
-	// The /pair endpoint above (where external clients redeem
-	// the code) is unchanged — these endpoints sit alongside it
-	// in the same auth model.
-	mux.HandleFunc("POST /console/clients/pair", s.handleClientPair)
-	mux.HandleFunc("DELETE /console/clients/{id}", s.handleClientRevoke)
+	// Apps (paired clients) — dashboard endpoints for code-gen +
+	// revoke. The /pair endpoint where external clients redeem the
+	// code is mounted further down (only when Engine != nil) but
+	// follows the same gate.
+	mux.Handle("POST /console/clients/pair", gate(s.handleClientPair))
+	mux.Handle("DELETE /console/clients/{id}", gate(s.handleClientRevoke))
 
-	// OAuth — per-user client_id management + flow kickoff. Same
-	// localhost-only contract as the other /console/* endpoints;
-	// each handler 503s when its dependency is unwired.
-	mux.HandleFunc("GET /console/oauth/clients", s.handleOAuthClientsList)
-	mux.HandleFunc("POST /console/oauth/clients/{provider}", s.handleOAuthClientsSet)
-	mux.HandleFunc("DELETE /console/oauth/clients/{provider}", s.handleOAuthClientsDelete)
-	mux.HandleFunc("GET /console/oauth/providers", s.handleOAuthProvidersList)
-	mux.HandleFunc("POST /console/oauth/begin", s.handleOAuthBegin)
-	mux.HandleFunc("GET /console/oauth/status", s.handleOAuthStatus)
+	// OAuth — per-user client_id management + flow kickoff.
+	mux.Handle("GET /console/oauth/clients", gate(s.handleOAuthClientsList))
+	mux.Handle("POST /console/oauth/clients/{provider}", gate(s.handleOAuthClientsSet))
+	mux.Handle("DELETE /console/oauth/clients/{provider}", gate(s.handleOAuthClientsDelete))
+	mux.Handle("GET /console/oauth/providers", gate(s.handleOAuthProvidersList))
+	mux.Handle("POST /console/oauth/begin", gate(s.handleOAuthBegin))
+	mux.Handle("GET /console/oauth/status", gate(s.handleOAuthStatus))
 
 	if opts.Engine != nil {
-		// /pair: pairing redemption, unauthenticated by design (the
-		// pairing code IS the auth token for this one request).
-		mux.HandleFunc("POST /pair", s.handlePair)
+		// /pair: pairing redemption. The pairing code itself IS the
+		// proof for the redemption request body; layered on top, the
+		// setup-token gate (when active) requires a Bearer credential
+		// on the request to prevent random Cloud Run traffic from
+		// hammering /pair to guess codes. On laptop the gate is
+		// inactive and the historical "code-is-the-secret" model
+		// holds untouched.
+		mux.Handle("POST /pair", gate(s.handlePair))
 
 		// /mcp: bearer-authenticated, dispatches MCP JSON-RPC (POST)
 		// and SSE (GET). The mcp.Handler runs under the auth

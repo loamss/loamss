@@ -183,6 +183,24 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 		"source_intents", len(req.SourceIntents),
 	)
 
+	// Burn the setup token. From here on the gate enforces
+	// paired-client auth only; the bearer-token-as-setup-token path
+	// dies for this instance and (via the sentinel file) for any
+	// future restarts against the same data_dir.
+	//
+	// Errors on the sentinel write are logged but not surfaced: the
+	// in-memory flip already happened, and the next /console/init
+	// attempt under this process will be rejected regardless. The
+	// only thing the sentinel buys us is restart-safety.
+	if s.setupToken != nil {
+		if err := s.setupToken.Consume(); err != nil {
+			s.logger.Warn("console init: persisting setup-token consumption failed",
+				"err", err,
+				"hint", "in-memory state is correct; on restart the gate would re-open until /console/init is rerun",
+			)
+		}
+	}
+
 	// Diff against the live config. Apply what's hot-swappable
 	// (currently only log config), report the rest as
 	// restart-required so the dashboard can render a clear banner
