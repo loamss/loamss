@@ -12,6 +12,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token. Build / test / lint only need to read the repo
+# checkout; they never write back. Explicit `permissions:` here closes
+# the CodeQL alert "missing workflow permissions" — without it the job
+# inherits the org default, which historically allowed writes. See:
+# https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token
+permissions:
+  contents: read
+
 jobs:
   runtime:
     name: runtime (${{ matrix.os }})
