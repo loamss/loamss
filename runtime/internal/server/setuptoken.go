@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
@@ -61,10 +62,21 @@ type SetupTokenGate struct {
 	// because Consume can race with concurrent middleware reads.
 	consumed atomic.Bool
 
-	// consumedPath is the sentinel file written when Consume is
-	// called. Survives restarts so a re-deploy doesn't undo
-	// consumption. Empty string disables persistence (used by tests).
+	// consumedPath is the legacy file-based sentinel. Read at
+	// construction for back-compat with laptop installs that
+	// upgraded from v0.2.0-alpha.1 (which only had file persistence).
+	// Written on Consume only when consumedStore is nil — when both
+	// are set, the DB is the source of truth and we skip the
+	// duplicate file write to avoid leaving a stale sentinel behind
+	// after the operator deletes the row to re-open the gate.
 	consumedPath string
+
+	// consumedStore is the durable persistence layer — a row in
+	// runtime.db's runtime_state table. Survives Cloud Run cold
+	// starts and other ephemeral-filesystem environments where the
+	// file sentinel would be wiped. nil disables DB persistence
+	// (only used by tests that don't need a DB).
+	consumedStore *RuntimeStateStore
 
 	// origin records where the active token came from for diagnostic
 	// logging only. Never returned to the wire.
@@ -89,11 +101,24 @@ type SetupTokenOptions struct {
 	// startup; never echoed to clients.
 	Origin string
 
-	// ConsumedPath is the on-disk sentinel that records prior
-	// consumption. When the file exists at construction time, the
-	// gate starts in the "consumed" state (setup token rejected,
-	// only paired-client auth accepted). Empty disables persistence.
+	// ConsumedPath is the legacy on-disk sentinel. Read at
+	// construction for back-compat with v0.2.0-alpha.1 laptop
+	// installs that have already burned their token. Empty disables
+	// the legacy path; new installs should rely entirely on
+	// ConsumedStore.
 	ConsumedPath string
+
+	// ConsumedStore is the durable persistence layer — a row in the
+	// runtime_state table. On Cloud Run / Fly / GKE this is the only
+	// reliable signal because the container filesystem is wiped on
+	// every cold start. When set, the row is the source of truth:
+	// the gate reads from here at construction, writes here on
+	// Consume, and skips the file sentinel write entirely.
+	//
+	// When both ConsumedStore and ConsumedPath are nil, the gate
+	// runs without persistence (used by tests that exercise the
+	// in-memory state machine directly).
+	ConsumedStore *RuntimeStateStore
 
 	// Engine is the permission engine to fall back to for
 	// paired-client auth. Required.
@@ -114,15 +139,32 @@ func NewSetupTokenGate(opts SetupTokenOptions) (*SetupTokenGate, error) {
 		return nil, fmt.Errorf("setup token must be at least 16 chars (got %d) — generated tokens are 64", len(opts.Token))
 	}
 	g := &SetupTokenGate{
-		activeToken:  opts.Token,
-		consumedPath: opts.ConsumedPath,
-		origin:       opts.Origin,
-		engine:       opts.Engine,
+		activeToken:   opts.Token,
+		consumedPath:  opts.ConsumedPath,
+		consumedStore: opts.ConsumedStore,
+		origin:        opts.Origin,
+		engine:        opts.Engine,
 	}
-	// Honor a prior consumption marker. Operators who want to re-init
-	// must delete this file (the future `loamss setup-token reset`
-	// CLI will do it for them) and restart.
-	if opts.ConsumedPath != "" {
+	// Honor a prior consumption marker from EITHER persistence layer.
+	// On a freshly-deployed cloud instance only the DB row will exist
+	// (filesystem is ephemeral). On a laptop upgraded from
+	// v0.2.0-alpha.1 only the file will exist. Either signal means
+	// "the operator already completed init on a previous run; don't
+	// re-open the gate".
+	//
+	// Operators who want to re-init must clear BOTH signals: delete
+	// the file (when present) AND delete the runtime_state row. The
+	// future `loamss setup-token reset` CLI will do both atomically.
+	if opts.ConsumedStore != nil {
+		exists, err := opts.ConsumedStore.Exists(context.Background(), StateKeySetupTokenConsumed)
+		if err != nil {
+			return nil, fmt.Errorf("setup token: reading consumed state from DB: %w", err)
+		}
+		if exists {
+			g.consumed.Store(true)
+		}
+	}
+	if !g.consumed.Load() && opts.ConsumedPath != "" {
 		if _, err := os.Stat(opts.ConsumedPath); err == nil {
 			g.consumed.Store(true)
 		}
@@ -182,6 +224,31 @@ func (g *SetupTokenGate) Consume() (firstCall bool, err error) {
 	}
 	if !g.consumed.CompareAndSwap(false, true) {
 		return false, nil
+	}
+
+	// Persistence priority:
+	//
+	//   1. ConsumedStore (runtime_state DB row) — the durable path.
+	//      Survives Cloud Run cold starts. When set, we write here
+	//      AND skip the file write to avoid leaving a stale sentinel
+	//      behind after an operator deletes the DB row to re-init.
+	//
+	//   2. ConsumedPath (file sentinel) — only used when the store
+	//      is nil, which today happens for tests that don't wire a
+	//      DB. New installs always have a DB.
+	//
+	//   3. Neither set — in-memory only. Tests use this when they
+	//      only need to exercise the gate's behavior without
+	//      caring about restart-survival.
+	if g.consumedStore != nil {
+		if err := g.consumedStore.Set(
+			context.Background(),
+			StateKeySetupTokenConsumed,
+			time.Now().UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return true, fmt.Errorf("setup token: writing consumed row: %w", err)
+		}
+		return true, nil
 	}
 	if g.consumedPath == "" {
 		return true, nil

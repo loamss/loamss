@@ -15,6 +15,7 @@ import (
 
 	"github.com/loamss/loamss/runtime/internal/audit"
 	"github.com/loamss/loamss/runtime/internal/config"
+	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/mcp"
 	"github.com/loamss/loamss/runtime/internal/permission"
 )
@@ -359,6 +360,168 @@ func TestSetupTokenGate_PairedClientFallthrough(t *testing.T) {
 	if resp2.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp2.Body)
 		t.Errorf("paired-client post-consume: status %d (want 200): %s", resp2.StatusCode, raw)
+	}
+}
+
+// TestSetupTokenGate_DBPersistenceSurvivesEphemeralDisk simulates a
+// Cloud Run cold start: gate consumes its token, the container's
+// filesystem disappears (we wipe the file sentinel), the runtime
+// reboots against the same DB, and the new gate instance must read
+// the consumption signal from the DB row alone.
+//
+// This is the failure case that motivated the runtime_state table in
+// the first place. Without DB persistence, a Cloud Run instance
+// re-issues a fresh setup token on every cold start because /tmp
+// gets wiped between instances.
+func TestSetupTokenGate_DBPersistenceSurvivesEphemeralDisk(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// One DB handle, shared by both "instances" — simulating the
+	// same Cloud SQL backend.
+	db, err := database.OpenSQLite(ctx, filepath.Join(dir, "runtime.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	permStore, err := permission.OpenWith(ctx, db)
+	if err != nil {
+		t.Fatalf("permission.OpenWith: %v", err)
+	}
+	defer func() { _ = permStore.Close() }()
+	w, err := audit.OpenSQLite(ctx, filepath.Join(dir, "audit.db"))
+	if err != nil {
+		t.Fatalf("audit.OpenSQLite: %v", err)
+	}
+	defer func() { _ = w.Close(ctx) }()
+	engine := permission.NewEngine(permStore, w)
+
+	stateStore, err := OpenRuntimeStateStoreWith(ctx, db)
+	if err != nil {
+		t.Fatalf("OpenRuntimeStateStoreWith: %v", err)
+	}
+
+	token, _ := GenerateSetupToken()
+
+	// Instance 1: "first deploy". File path lives in a directory we
+	// will wipe to simulate Cloud Run's ephemeral filesystem.
+	ephemeralDir := filepath.Join(t.TempDir(), "ephemeral")
+	if err := os.MkdirAll(ephemeralDir, 0o700); err != nil {
+		t.Fatalf("mkdir ephemeral: %v", err)
+	}
+	consumedPath := filepath.Join(ephemeralDir, ".setup-consumed")
+
+	gate1, err := NewSetupTokenGate(SetupTokenOptions{
+		Token:         token,
+		ConsumedPath:  consumedPath,
+		ConsumedStore: stateStore,
+		Engine:        engine,
+	})
+	if err != nil {
+		t.Fatalf("instance 1 NewSetupTokenGate: %v", err)
+	}
+	if gate1.IsConsumed() {
+		t.Fatal("instance 1: gate should start unconsumed")
+	}
+
+	// Burn the token.
+	first, err := gate1.Consume()
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if !first {
+		t.Fatal("Consume returned firstCall=false on a fresh gate")
+	}
+
+	// Verify the DB row exists, and the file sentinel was NOT
+	// written (because the DB write took priority).
+	exists, err := stateStore.Exists(ctx, StateKeySetupTokenConsumed)
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Error("DB row should exist after Consume")
+	}
+	if _, err := os.Stat(consumedPath); !os.IsNotExist(err) {
+		t.Errorf("file sentinel should NOT have been written when DB store is wired (got err=%v)", err)
+	}
+
+	// Simulate Cloud Run cold start: wipe the entire ephemeral dir
+	// the way Cloud Run wipes the container filesystem between
+	// instances.
+	if err := os.RemoveAll(ephemeralDir); err != nil {
+		t.Fatalf("simulating cold start: %v", err)
+	}
+	// Recreate the dir (start.go would do this via MkdirAll) but
+	// without restoring the sentinel.
+	if err := os.MkdirAll(ephemeralDir, 0o700); err != nil {
+		t.Fatalf("recreate ephemeral: %v", err)
+	}
+
+	// Instance 2: "next cold start". Fresh gate against the same DB,
+	// same path (but path no longer exists).
+	gate2, err := NewSetupTokenGate(SetupTokenOptions{
+		Token:         token, // operator would auto-gen a new one in practice; same token simplifies the assertion
+		ConsumedPath:  consumedPath,
+		ConsumedStore: stateStore,
+		Engine:        engine,
+	})
+	if err != nil {
+		t.Fatalf("instance 2 NewSetupTokenGate: %v", err)
+	}
+	if !gate2.IsConsumed() {
+		t.Fatal("instance 2: gate should start consumed (DB row survived)")
+	}
+	// The token must NOT match — even though the gate has the same
+	// activeToken in memory, matches() rejects all input post-consume.
+	if gate2.matches(token) {
+		t.Error("instance 2: matches() should return false after restart-with-consumed-row")
+	}
+}
+
+// TestSetupTokenGate_FileSentinelBackCompat ensures laptop installs
+// upgrading from v0.2.0-alpha.1 (which only had file persistence)
+// still recognize prior consumption. The file path is consulted ONLY
+// when no DB row exists — the DB is the new source of truth, but we
+// don't want to silently re-open the gate on existing installs.
+func TestSetupTokenGate_FileSentinelBackCompat(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := database.OpenSQLite(ctx, filepath.Join(dir, "runtime.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	stateStore, err := OpenRuntimeStateStoreWith(ctx, db)
+	if err != nil {
+		t.Fatalf("OpenRuntimeStateStoreWith: %v", err)
+	}
+	permStore, _ := permission.OpenWith(ctx, db)
+	defer func() { _ = permStore.Close() }()
+	w, _ := audit.OpenSQLite(ctx, filepath.Join(dir, "audit.db"))
+	defer func() { _ = w.Close(ctx) }()
+	engine := permission.NewEngine(permStore, w)
+
+	// Seed the file sentinel as a v0.2.0-alpha.1 install would have
+	// left it — no DB row, file present.
+	consumedPath := filepath.Join(dir, ".setup-consumed")
+	if err := os.WriteFile(consumedPath, []byte("consumed\n"), 0o600); err != nil {
+		t.Fatalf("seed file sentinel: %v", err)
+	}
+
+	token, _ := GenerateSetupToken()
+	gate, err := NewSetupTokenGate(SetupTokenOptions{
+		Token:         token,
+		ConsumedPath:  consumedPath,
+		ConsumedStore: stateStore,
+		Engine:        engine,
+	})
+	if err != nil {
+		t.Fatalf("NewSetupTokenGate: %v", err)
+	}
+	if !gate.IsConsumed() {
+		t.Error("gate should respect legacy file sentinel even without DB row")
 	}
 }
 

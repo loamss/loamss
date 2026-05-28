@@ -17,6 +17,7 @@ import (
 	"github.com/loamss/loamss/runtime/internal/memory"
 	"github.com/loamss/loamss/runtime/internal/oauth"
 	"github.com/loamss/loamss/runtime/internal/permission"
+	"github.com/loamss/loamss/runtime/internal/server"
 	"github.com/loamss/loamss/runtime/internal/source"
 )
 
@@ -373,6 +374,131 @@ func TestIntegration_Audit_ConcurrentAppendsChainIntact(t *testing.T) {
 	}
 	if r.EntriesChecked != N {
 		t.Errorf("expected %d entries checked, got %d", N, r.EntriesChecked)
+	}
+}
+
+// TestIntegration_RuntimeState_SetExistsDelete is the basic Postgres
+// roundtrip for the runtime_state key/value table that backs the
+// setup-token consumption marker. Confirms migrations apply on a
+// fresh Postgres database, INSERT … ON CONFLICT DO UPDATE works
+// across pgx's rebind, and Exists distinguishes present from absent.
+func TestIntegration_RuntimeState_SetExistsDelete(t *testing.T) {
+	db := openPg(t)
+	store, err := server.OpenRuntimeStateStoreWith(context.Background(), db)
+	if err != nil {
+		t.Fatalf("OpenRuntimeStateStoreWith: %v", err)
+	}
+
+	ctx := context.Background()
+	exists, err := store.Exists(ctx, server.StateKeySetupTokenConsumed)
+	if err != nil {
+		t.Fatalf("Exists (empty): %v", err)
+	}
+	if exists {
+		t.Error("empty store should not have setup_token_consumed key")
+	}
+
+	if err := store.Set(ctx, server.StateKeySetupTokenConsumed, "2026-05-28T04:00:00Z"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	exists, err = store.Exists(ctx, server.StateKeySetupTokenConsumed)
+	if err != nil {
+		t.Fatalf("Exists (after Set): %v", err)
+	}
+	if !exists {
+		t.Error("key should exist after Set")
+	}
+
+	// Upsert path: re-Set the same key with a new value.
+	if err := store.Set(ctx, server.StateKeySetupTokenConsumed, "2026-05-28T05:00:00Z"); err != nil {
+		t.Fatalf("Set (upsert): %v", err)
+	}
+
+	if err := store.Delete(ctx, server.StateKeySetupTokenConsumed); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	exists, err = store.Exists(ctx, server.StateKeySetupTokenConsumed)
+	if err != nil {
+		t.Fatalf("Exists (after Delete): %v", err)
+	}
+	if exists {
+		t.Error("key should not exist after Delete")
+	}
+}
+
+// TestIntegration_SetupToken_PostgresSurvivesColdStart is the
+// cloud-deployment correctness test: open a gate against Postgres,
+// consume its token, simulate a cold start by constructing a NEW
+// gate against the same DB, and verify the new gate reads the
+// consumption signal correctly.
+//
+// In production on Cloud Run, the equivalent of the second gate
+// construction is what happens every time the container scales
+// from zero. Without the DB row, the file sentinel would have been
+// wiped along with the container, and the gate would re-issue a
+// fresh setup token — silently re-opening the wizard for whoever
+// hit the URL first. This test is the proof we don't.
+func TestIntegration_SetupToken_PostgresSurvivesColdStart(t *testing.T) {
+	db := openPg(t)
+	ctx := context.Background()
+
+	// Subsystems the gate needs.
+	permStore, err := permission.OpenWith(ctx, db)
+	if err != nil {
+		t.Fatalf("permission.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = permStore.Close() })
+	auditStore, err := audit.OpenWith(ctx, db)
+	if err != nil {
+		t.Fatalf("audit.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close(ctx) })
+	engine := permission.NewEngine(permStore, auditStore)
+
+	stateStore, err := server.OpenRuntimeStateStoreWith(ctx, db)
+	if err != nil {
+		t.Fatalf("OpenRuntimeStateStoreWith: %v", err)
+	}
+
+	token, err := server.GenerateSetupToken()
+	if err != nil {
+		t.Fatalf("GenerateSetupToken: %v", err)
+	}
+
+	// Instance 1: fresh deploy.
+	gate1, err := server.NewSetupTokenGate(server.SetupTokenOptions{
+		Token:         token,
+		Origin:        "test",
+		ConsumedStore: stateStore,
+		Engine:        engine,
+	})
+	if err != nil {
+		t.Fatalf("instance 1 NewSetupTokenGate: %v", err)
+	}
+	if gate1.IsConsumed() {
+		t.Fatal("instance 1: gate should start unconsumed against fresh DB")
+	}
+	first, err := gate1.Consume()
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if !first {
+		t.Fatal("Consume returned firstCall=false on a fresh gate")
+	}
+
+	// Instance 2: simulated cold start. Build a fresh gate against
+	// the same Postgres backend; it must read the prior consumption.
+	gate2, err := server.NewSetupTokenGate(server.SetupTokenOptions{
+		Token:         token,
+		Origin:        "test",
+		ConsumedStore: stateStore,
+		Engine:        engine,
+	})
+	if err != nil {
+		t.Fatalf("instance 2 NewSetupTokenGate: %v", err)
+	}
+	if !gate2.IsConsumed() {
+		t.Fatal("instance 2: gate should start consumed (DB row survived cold start)")
 	}
 }
 

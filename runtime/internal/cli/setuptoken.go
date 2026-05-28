@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/loamss/loamss/runtime/internal/audit"
+	"github.com/loamss/loamss/runtime/internal/database"
 	"github.com/loamss/loamss/runtime/internal/permission"
 	"github.com/loamss/loamss/runtime/internal/profile"
 	"github.com/loamss/loamss/runtime/internal/server"
@@ -48,6 +49,7 @@ func resolveSetupTokenGate(
 	ctx context.Context,
 	prof profile.Profile,
 	dataDir string,
+	runtimeDB *database.Database,
 	engine *permission.Engine,
 	auditWriter audit.Writer,
 	logger *slog.Logger,
@@ -78,11 +80,21 @@ func resolveSetupTokenGate(
 		origin = "auto-generated"
 	}
 
+	// The durable persistence layer — a row in runtime.db's
+	// runtime_state table. On Cloud Run / Fly / GKE this is the only
+	// place consumption can survive a cold start; the file sentinel
+	// is back-compat for laptops upgrading from v0.2.0-alpha.1.
+	stateStore, err := server.OpenRuntimeStateStoreWith(ctx, runtimeDB)
+	if err != nil {
+		return nil, fmt.Errorf("opening runtime_state store: %w", err)
+	}
+
 	gate, err := server.NewSetupTokenGate(server.SetupTokenOptions{
-		Token:        token,
-		Origin:       origin,
-		ConsumedPath: filepath.Join(dataDir, setupConsumedFilename),
-		Engine:       engine,
+		Token:         token,
+		Origin:        origin,
+		ConsumedPath:  filepath.Join(dataDir, setupConsumedFilename),
+		ConsumedStore: stateStore,
+		Engine:        engine,
 	})
 	if err != nil {
 		return nil, err
@@ -103,7 +115,7 @@ func resolveSetupTokenGate(
 		logger.Info("setup token gate active; previously consumed",
 			"profile", prof,
 			"origin", origin,
-			"hint", "delete <data_dir>/"+setupConsumedFilename+" to re-open the wizard",
+			"hint", "to re-open the wizard: DELETE FROM runtime_state WHERE key = 'setup_token_consumed' (and remove <data_dir>/"+setupConsumedFilename+" if it exists), then restart",
 		)
 		return gate, nil
 	}

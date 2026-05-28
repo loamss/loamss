@@ -268,13 +268,26 @@ the dashboard — it polls cleanly.
 
 ### Re-opening the wizard
 
-If you need to re-run the wizard (config got into a bad state,
-you're moving the runtime to a new database), delete the consumed
-marker and restart:
+The consumption marker lives in two places — a row in the runtime
+DB (the durable source of truth, the only one that survives Cloud
+Run cold starts) and, on laptop installs upgraded from
+v0.2.0-alpha.1, a sentinel file. Clearing both is the only way to
+re-open the wizard.
 
 ```bash
-rm <data_dir>/.setup-consumed
-# restart the instance (Cloud Run: redeploy, Fly: `fly machine restart`)
+# On Cloud Run / Fly / any cloud deploy (Postgres-backed runtime DB):
+psql "$LOAMSS_DATABASE_URL" \
+  -c "DELETE FROM runtime_state WHERE key = 'setup_token_consumed';"
+
+# On laptop installs (SQLite runtime.db):
+sqlite3 ~/.loamss/runtime.db \
+  "DELETE FROM runtime_state WHERE key = 'setup_token_consumed';"
+rm -f ~/.loamss/.setup-consumed  # back-compat file, only present if upgraded
+
+# Then restart the instance:
+#   Cloud Run: gcloud run services update-traffic <svc> --to-latest
+#   Fly:       fly machine restart <id>
+#   laptop:    loamss start
 ```
 
 The next start generates a fresh setup token. The previous token
