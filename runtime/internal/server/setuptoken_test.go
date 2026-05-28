@@ -609,6 +609,123 @@ func TestSetupTokenGate_ConsumeEmitsAuditEntry(t *testing.T) {
 	}
 }
 
+// TestSetupTokenGate_ConsoleInitReturnsPairedBearer is the
+// cloud-bootstrap-fix correctness check. After init burns the
+// setup token, the gate accepts only paired-client credentials.
+// /console/init has to hand the wizard a paired bearer in the
+// response — otherwise the operator has no way to authenticate
+// subsequent /console/* requests without out-of-band surgery
+// (the psql workaround in docs/deploying.md).
+//
+// Verifies the bearer round-trips by:
+//   1. submitting /console/init with the setup token
+//   2. extracting paired_console.token from the response
+//   3. using the bearer (no setup token) to call /console/state
+//   4. confirming 200
+func TestSetupTokenGate_ConsoleInitReturnsPairedBearer(t *testing.T) {
+	f := newGatedFixture(t)
+
+	// First init succeeds with setup token, returns the paired bearer.
+	resp := f.postInit(t, "Bearer "+f.token)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("init: status %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		PairedConsole *struct {
+			ClientID string `json:"client_id"`
+			Token    string `json:"token"`
+		} `json:"paired_console"`
+		Capability struct {
+			CreatesPairedConsole bool `json:"creates_paired_console"`
+		} `json:"capability"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode init response: %v", err)
+	}
+
+	if !body.Capability.CreatesPairedConsole {
+		t.Error("capability.creates_paired_console should be true after fix")
+	}
+	if body.PairedConsole == nil {
+		t.Fatal("paired_console missing from init response — auto-pair didn't fire")
+	}
+	if body.PairedConsole.Token == "" {
+		t.Error("paired_console.token is empty")
+	}
+	if body.PairedConsole.ClientID == "" {
+		t.Error("paired_console.client_id is empty")
+	}
+	if !strings.HasPrefix(body.PairedConsole.ClientID, "cli-") {
+		t.Errorf("client_id %q: expected cli- prefix from the engine", body.PairedConsole.ClientID)
+	}
+
+	// The setup token is now burned. /console/state with it → 401.
+	req1, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/console/state", nil)
+	req1.Header.Set("Authorization", "Bearer "+f.token)
+	r1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatalf("GET /console/state with setup token: %v", err)
+	}
+	r1.Body.Close()
+	if r1.StatusCode != http.StatusUnauthorized {
+		t.Errorf("setup token post-consume: status %d (want 401)", r1.StatusCode)
+	}
+
+	// The paired-console bearer must work in its place.
+	req2, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/console/state", nil)
+	req2.Header.Set("Authorization", "Bearer "+body.PairedConsole.Token)
+	r2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET /console/state with paired bearer: %v", err)
+	}
+	defer r2.Body.Close()
+	if r2.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(r2.Body)
+		t.Errorf("paired bearer post-consume: status %d (want 200): %s", r2.StatusCode, raw)
+	}
+}
+
+// TestSetupTokenGate_ConsoleInitPairedBearerCanCreateNewClients is
+// the closing-the-loop test: the auto-paired bearer must be able to
+// hit /console/clients/pair so the operator can pair Claude Desktop,
+// Cursor, etc. without psql surgery.
+func TestSetupTokenGate_ConsoleInitPairedBearerCanCreateNewClients(t *testing.T) {
+	f := newGatedFixture(t)
+
+	// Burn setup token via init, capture bearer.
+	resp := f.postInit(t, "Bearer "+f.token)
+	defer resp.Body.Close()
+	var body struct {
+		PairedConsole *struct {
+			Token string `json:"token"`
+		} `json:"paired_console"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.PairedConsole == nil {
+		t.Fatal("paired_console missing")
+	}
+
+	// Use the paired bearer to mint a new code (Claude Desktop's
+	// pairing flow today).
+	req, _ := http.NewRequest(
+		http.MethodPost,
+		f.srv.URL+"/console/clients/pair",
+		strings.NewReader(`{"client_name":"Claude Desktop"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+body.PairedConsole.Token)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /console/clients/pair: %v", err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(r.Body)
+		t.Errorf("create pairing code: status %d (want 201): %s", r.StatusCode, raw)
+	}
+}
+
 func TestSetupTokenGate_GenerateProducesHighEntropy(t *testing.T) {
 	// Two consecutive generates must produce different tokens, both
 	// hex-encoded 64 chars (32 bytes).

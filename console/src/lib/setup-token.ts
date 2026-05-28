@@ -35,6 +35,13 @@
 const STORAGE_KEY = "loamss.setup_token";
 const URL_PARAM = "setup";
 
+// Separate storage slot for the durable paired-client bearer the
+// runtime hands back from /console/init. Lives alongside the setup
+// token rather than replacing it because the two have different
+// lifecycles: the setup token is a one-time-use bootstrap value,
+// the paired-client bearer is durable across runtime restarts.
+const CLIENT_BEARER_KEY = "loamss.client_bearer";
+
 /**
  * captureSetupTokenFromURL extracts the `?setup=<token>` parameter
  * from window.location, stores it, and removes it from the visible
@@ -141,4 +148,84 @@ export function clearSetupToken(): void {
  */
 export function hasSetupToken(): boolean {
   return getSetupToken() !== null;
+}
+
+// ---------------------------------------------------------------------
+// Paired-client bearer — the durable credential the runtime hands back
+// from /console/init after auto-pairing a "Loamss Console" client.
+// Lives in the same localStorage so reloads keep working; takes
+// precedence over the setup token in authedFetch (see runtime-client.ts).
+// ---------------------------------------------------------------------
+
+let inMemoryClientBearer: string | null = null;
+
+/**
+ * Persist the paired-console bearer returned by /console/init. Called
+ * from applyConsoleInit when the runtime included `paired_console.token`
+ * in the response. Drops the now-consumed setup token at the same time —
+ * the durable bearer supersedes it.
+ */
+export function setClientBearer(token: string): void {
+  const t = token.trim();
+  if (!t) return;
+  inMemoryClientBearer = t;
+  clearSetupToken();
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CLIENT_BEARER_KEY, t);
+  } catch {
+    // Already mirrored in inMemoryClientBearer.
+  }
+}
+
+/**
+ * Read the active paired-client bearer. Returns null when no bearer has
+ * been captured (laptop installs before init complete, or fresh
+ * browser session that hasn't run the wizard).
+ */
+export function getClientBearer(): string | null {
+  if (typeof window === "undefined") return null;
+  if (inMemoryClientBearer) return inMemoryClientBearer;
+  try {
+    return window.localStorage.getItem(CLIENT_BEARER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Drop the stored client bearer. Called when the runtime returns 401
+ * on a request that carried it — the credential was likely revoked
+ * from the Apps pane on another tab or via the CLI.
+ */
+export function clearClientBearer(): void {
+  inMemoryClientBearer = null;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(CLIENT_BEARER_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Resolves the credential that should attach to /console/* fetches.
+ * Paired-client bearer wins when present (it's durable); setup token
+ * is the bootstrap fallback before /console/init has completed.
+ *
+ * Returns { token, kind } so the caller can distinguish them for
+ * 401-self-heal — a 401 with the bearer means "drop the bearer"; a
+ * 401 with the setup token means "drop the setup token". Distinct
+ * because dropping the bearer prematurely would log out the wizard
+ * for no reason.
+ */
+export function getActiveCredential():
+  | { token: string; kind: "bearer" }
+  | { token: string; kind: "setup_token" }
+  | null {
+  const bearer = getClientBearer();
+  if (bearer) return { token: bearer, kind: "bearer" };
+  const setup = getSetupToken();
+  if (setup) return { token: setup, kind: "setup_token" };
+  return null;
 }

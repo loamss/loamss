@@ -22,7 +22,12 @@
  * the runtime's URL directly.
  */
 
-import { clearSetupToken, getSetupToken } from "./setup-token";
+import {
+  clearClientBearer,
+  clearSetupToken,
+  getActiveCredential,
+  setClientBearer,
+} from "./setup-token";
 
 /**
  * authedFetch wraps the browser fetch with two pieces of glue every
@@ -48,27 +53,32 @@ async function authedFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ): Promise<Response> {
-  const token = getSetupToken();
-  if (token) {
-    // Merge headers — preserve any caller-supplied Content-Type etc.
-    // Construct a Headers object so the case-insensitive merge works
-    // regardless of whether init.headers was a Record, an array, or
-    // a Headers instance.
+  // Paired-client bearer wins over setup token when both exist
+  // (the bearer is durable; the setup token is a one-shot
+  // bootstrap). getActiveCredential returns the right one + the
+  // kind, so 401 self-heal can target the right slot.
+  const cred = getActiveCredential();
+  if (cred) {
     const headers = new Headers(init.headers ?? {});
     if (!headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${token}`);
+      headers.set("Authorization", `Bearer ${cred.token}`);
     }
     init = { ...init, headers };
   }
   const resp = await fetch(input, init);
 
-  // Self-heal: if the gate just consumed our token (another tab
-  // completed init, or the operator pasted the token after the
-  // runtime already had it stashed in the sentinel file), drop it
-  // so we stop sending it. The 401 itself still propagates to the
-  // caller — they decide how to surface the prompt to re-paste.
-  if (resp.status === 401 && token) {
-    clearSetupToken();
+  // Self-heal: drop the credential that just failed so we stop
+  // sending it on subsequent requests. A 401 with the bearer means
+  // the paired client was revoked (Apps pane revoke, CLI revoke);
+  // a 401 with the setup token means the gate consumed it under us.
+  // The 401 itself still propagates to the caller — they decide how
+  // to surface a re-auth prompt.
+  if (resp.status === 401 && cred) {
+    if (cred.kind === "bearer") {
+      clearClientBearer();
+    } else {
+      clearSetupToken();
+    }
   }
   return resp;
 }
@@ -228,6 +238,15 @@ export interface ConsoleInitOk {
 		restartsRuntime: boolean;
 		createsPairedConsole: boolean;
 		addsConfiguredSources: boolean;
+	};
+	// Auto-paired "Loamss Console" client. The runtime mints this
+	// during init so the wizard has a durable bearer to keep talking
+	// to /console/* after the setup token is consumed. applyConsoleInit
+	// stashes the token in localStorage and authedFetch starts using
+	// it on the next request.
+	pairedConsole?: {
+		clientId: string;
+		token: string;
 	};
 }
 
@@ -858,6 +877,10 @@ export async function applyConsoleInit(
 			const body = (await resp.json()) as {
 				written_to: string;
 				next_step: string;
+				paired_console?: {
+					client_id: string;
+					token: string;
+				};
 				capability: {
 					writes_config_file: boolean;
 					restarts_runtime: boolean;
@@ -865,6 +888,16 @@ export async function applyConsoleInit(
 					adds_configured_sources: boolean;
 				};
 			};
+
+			// Stash the auto-paired bearer the moment we see it — this
+			// is the credential the gate accepts post-setup-token, so
+			// every subsequent /console/* fetch needs it attached.
+			// authedFetch reads it from localStorage on each call, so
+			// the very next dashboard poll picks it up automatically.
+			if (body.paired_console?.token) {
+				setClientBearer(body.paired_console.token);
+			}
+
 			return {
 				ok: true,
 				writtenTo: body.written_to,
@@ -875,6 +908,14 @@ export async function applyConsoleInit(
 					createsPairedConsole: body.capability.creates_paired_console,
 					addsConfiguredSources: body.capability.adds_configured_sources,
 				},
+				...(body.paired_console
+					? {
+							pairedConsole: {
+								clientId: body.paired_console.client_id,
+								token: body.paired_console.token,
+							},
+						}
+					: {}),
 			};
 		}
 		if (resp.status === 409) {

@@ -249,63 +249,58 @@ against a real multi-replica deployment.
 
 ---
 
-## Known rough edge: bootstrapping the first paired client
+## Bootstrapping the first paired client
 
-After `/console/init` burns the setup token (commit `3088e16`,
-verified end-to-end against Cloud Run in commit `23a871c`), the gate
-on `/console/*` and `/pair` accepts only paired-client credentials.
+When `/console/init` completes successfully, the runtime mints a
+"Loamss Console" paired client and returns its bearer in the same
+response:
 
-But your operator has no paired-client credential yet — the wizard
-just used the setup token, which is now consumed. So `+ Pair an
-app` in the dashboard 401s, and you can't redeem a pairing code
-because `/pair` also 401s.
-
-The clean fix is alpha.3 work: `/console/init` will mint a
-"console" paired client as part of completing the wizard and
-return its bearer in the response. The console wizard captures
-that bearer and uses it for subsequent `/console/*` calls. After
-this, "+ Pair an app" works because you're already authenticated
-as the console client.
-
-**Until that ships,** the workaround is psql + restart:
-
-```bash
-# 1. Connect to Cloud SQL (needs Cloud SQL Auth Proxy on your laptop)
-psql "$DSN" -c "DELETE FROM runtime_state WHERE key = 'setup_token_consumed';"
-
-# 2. Restart the Cloud Run revision so the gate re-opens
-gcloud run services update loamss \
-  --project=$PROJECT_ID --region=$REGION \
-  --update-labels="reset=$(date +%s)"
-
-# 3. Read the fresh token from logs
-gcloud run services logs read loamss --region=$REGION | grep "Setup token:"
-
-# 4. Generate + redeem a pairing code via curl (gate accepts the
-#    fresh setup token until the next /console/init consumes it)
-TOKEN="<fresh-token>"
-URL="https://your-service.run.app"
-
-curl -X POST "$URL/console/clients/pair" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"client_name":"Claude Desktop"}'
-# → {"code":"5QUK-5EPE", ...}
-
-curl -X POST "$URL/pair" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"code":"5QUK-5EPE","metadata":{"app":"claude"}}'
-# → {"token":"loamss_eyJ...", ...}
+```json
+{
+  "ok": true,
+  "written_to": "...",
+  "paired_console": {
+    "client_id": "cli-01KSQ29CGTQZD7TGYPN8HX0FHG",
+    "token": "loamss_eyJraWQiOi..."
+  },
+  "capability": { "creates_paired_console": true, ... }
+}
 ```
 
-The `loamss_...` bearer is what goes into Claude Desktop's
-`claude_desktop_config.json` — see
-[`use-cases.md`](use-cases.md) step 4 of the Claude pairing flow.
+The console wizard captures the bearer into
+`localStorage.loamss.client_bearer` and uses it for every
+subsequent `/console/*` call. The dashboard's `+ Pair an app`
+button works immediately — no out-of-band steps, no psql surgery.
 
-You only need to do this once; the paired-client bearer is
-durable across cold starts (paired clients live in `runtime.db`
-the same way the consumed-state marker does).
+The console client is durable: it lives in `runtime.db` like every
+other paired client, survives cold starts, and shows up in the
+Apps pane where you can revoke it (don't, unless you also have
+another bearer to replace it with).
+
+To pair Claude Desktop or any other external MCP client from a
+fresh Cloud Run deploy:
+
+1. Open `<service-url>/?setup=<token>` and complete the wizard
+2. The Done page shows you're authenticated; the dashboard polls work
+3. Apps pane → `+ Pair an app` → enter "Claude Desktop" → grab code
+4. Redeem the code to get Claude's bearer (e.g. via curl using your
+   console bearer from DevTools localStorage):
+
+   ```bash
+   curl -X POST "$URL/pair" \
+     -H "Authorization: Bearer $CONSOLE_BEARER" \
+     -H "Content-Type: application/json" \
+     -d '{"code":"5QUK-5EPE","metadata":{"app":"claude"}}'
+   ```
+
+5. Paste the returned `loamss_...` bearer into
+   `claude_desktop_config.json` — see
+   [`use-cases.md`](use-cases.md) §1 for the full Claude flow
+
+Verified end-to-end in
+`TestSetupTokenGate_ConsoleInitReturnsPairedBearer` and
+`TestSetupTokenGate_ConsoleInitPairedBearerCanCreateNewClients`
+in `internal/server/setuptoken_test.go`.
 
 ---
 

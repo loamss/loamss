@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -75,7 +76,29 @@ type consoleInitResponse struct {
 	// until `loamss start` is restarted. The wizard's Done page
 	// renders a banner when this is non-empty.
 	RestartRequired []config.FieldChange `json:"restart_required,omitempty"`
-	Capability      consoleInitCapacity  `json:"capability"`
+	// PairedConsole is the bearer-credential handoff that closes the
+	// cloud-bootstrap gap: after /console/init burns the setup token,
+	// the wizard JS needs *some* credential to keep talking to
+	// /console/* through the gate. We mint a paired "Loamss Console"
+	// client as part of the same request and return its bearer here.
+	// The console persists it to localStorage and uses it from this
+	// point onward; the setup token is dropped.
+	//
+	// On laptop installs the gate is inactive, but we mint the client
+	// anyway so the dashboard's Apps pane shows a real row from day
+	// one (and so future features that DO require a bearer have one
+	// available).
+	PairedConsole *consoleInitPairedConsole `json:"paired_console,omitempty"`
+	Capability    consoleInitCapacity       `json:"capability"`
+}
+
+// consoleInitPairedConsole carries the auto-paired client's
+// credentials. Surfaced once to the wizard; the runtime cannot
+// re-emit the bearer (same one-shot rule as `loamss client pair
+// complete`).
+type consoleInitPairedConsole struct {
+	ClientID string `json:"client_id"`
+	Token    string `json:"token"`
 }
 
 // consoleInitConflictResponse is returned with HTTP 409 when a config
@@ -228,6 +251,26 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Auto-pair a "Loamss Console" client and hand the bearer back
+	// to the wizard. Closes the cloud-bootstrap gap: post-init the
+	// gate accepts only paired-client credentials, and prior to this
+	// fix the operator had no way to obtain one without psql
+	// surgery against runtime.db.
+	//
+	// We use the same code-mint + code-redeem flow the CLI offers
+	// (loamss client pair / loamss client pair complete), just
+	// in-process so no HTTP round trip is required. The TTL is
+	// short (10 seconds) because the redeem is the very next call.
+	//
+	// Failures are logged but don't fail the init — config was
+	// already written, and the operator can fall back to the psql
+	// workaround documented in docs/deploying.md. Worst case is
+	// degraded UX, not lost work.
+	var paired *consoleInitPairedConsole
+	if s.engine != nil {
+		paired = s.mintConsoleClient(r.Context())
+	}
+
 	// Diff against the live config. Apply what's hot-swappable
 	// (currently only log config), report the rest as
 	// restart-required so the dashboard can render a clear banner
@@ -255,6 +298,7 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 		NextStep:        nextStep,
 		Applied:         applied,
 		RestartRequired: diff.RestartRequired,
+		PairedConsole:   paired,
 		Capability: consoleInitCapacity{
 			WritesConfigFile: true,
 			// Partial hot-reload now lives in the daemon: log.level
@@ -262,7 +306,7 @@ func (s *Server) handleConsoleInit(w http.ResponseWriter, r *http.Request) {
 			// models, listen_addr still require `loamss start` —
 			// honestly reported via restart_required above.
 			RestartsRuntime:       len(applied) > 0,
-			CreatesPairedConsole:  false,
+			CreatesPairedConsole:  paired != nil,
 			AddsConfiguredSources: false,
 		},
 	})
@@ -384,4 +428,55 @@ func backupSuffixForOverwrite(overwrite bool) string {
 // handler easier to read and mockable in tests if we ever need to.
 func nowRFC3339() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+// mintConsoleClient runs the create-pairing-code + redeem dance
+// internally so /console/init can hand the wizard a paired-client
+// bearer alongside the config-written response. Without this, after
+// the gate consumes the setup token, the operator has no path to
+// authenticate any subsequent /console/* request without restarting
+// the runtime.
+//
+// Returns nil on any failure — the init request itself still
+// succeeds, just without the bearer. The operator can fall back to
+// the documented psql workaround in docs/deploying.md, which is
+// strictly less convenient but doesn't lose work.
+//
+// The "created_by" actor is "system:console-init" so the audit row
+// reflects the runtime-initiated origin (vs. a human operator
+// running `loamss client pair --name X`). The metadata field
+// records the same.
+func (s *Server) mintConsoleClient(ctx context.Context) *consoleInitPairedConsole {
+	const (
+		name      = "Loamss Console"
+		createdBy = "system:console-init"
+		ttl       = 10 * time.Second // we redeem in the next line; no race window
+	)
+	code, err := s.engine.CreatePairingCode(ctx, name, createdBy, ttl)
+	if err != nil {
+		s.logger.Warn("console init: minting paired-console pairing code failed",
+			"err", err,
+			"hint", "operator can fall back to the psql workaround in docs/deploying.md",
+		)
+		return nil
+	}
+	client, token, err := s.engine.RedeemPairingCode(ctx, code.Code, map[string]any{
+		"paired_via": "console_init",
+		"origin":     "auto",
+	})
+	if err != nil {
+		s.logger.Warn("console init: redeeming paired-console code failed",
+			"err", err,
+			"hint", "operator can fall back to the psql workaround in docs/deploying.md",
+		)
+		return nil
+	}
+	s.logger.Info("console init: auto-paired console client",
+		"client_id", client.ID,
+		"name", client.Name,
+	)
+	return &consoleInitPairedConsole{
+		ClientID: client.ID,
+		Token:    token,
+	}
 }

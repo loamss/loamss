@@ -179,21 +179,35 @@ credential. Same memory, different scopes, separate audit trails.
 The Claude Desktop config (step 4) is identical — just swap
 `http://127.0.0.1:7777/mcp` for your Cloud Run service URL.
 
-But there's an **active rough edge** on cloud deploys for getting
-the bearer in the first place: after `/console/init` burns the
-setup token, you have no paired-client credentials yet, and
-`+ Pair an app` in the dashboard is gated by the same paired-client
-requirement. Today's workaround is to use psql against your
-Cloud SQL to clear the consumption marker, restart the revision,
-and use a fresh setup token to generate + redeem a pairing code
-via HTTP. The cleaner fix — automatically pairing a "console"
-client during `/console/init` and surfacing its bearer to the
-wizard — is alpha.3 work tracked in `ROADMAP.md`.
+The bootstrap is the same too. When you complete the wizard,
+`/console/init` mints a "Loamss Console" client and returns its
+bearer in the response. The wizard JS stores that bearer in
+`localStorage`, so the dashboard's `+ Pair an app` button works
+immediately — same as on laptop.
 
-For now, the laptop flow above is the reliable path; cloud is
-operator-friendly for everything *except* this one bootstrap step.
+The first thing you do after the wizard: open Apps → `+ Pair an
+app` → name it "Claude Desktop" → get the 4-char code → redeem
+it on a CLI you have shell access to (your laptop, after pointing
+`LOAMSS_DATABASE_URL` at the Cloud SQL DSN), or via a small curl
+against your service:
 
-Detail: [`docs/connect-your-app.md`](connect-your-app.md).
+```bash
+URL="https://your-loamss.run.app"
+CONSOLE_BEARER="<the bearer the wizard captured; visible in browser DevTools localStorage.loamss.client_bearer>"
+
+curl -X POST "$URL/pair" \
+  -H "Authorization: Bearer $CONSOLE_BEARER" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"5QUK-5EPE","metadata":{"app":"claude"}}'
+# → {"token":"loamss_eyJ...", ...}
+```
+
+That `loamss_...` token is what goes into Claude Desktop's
+`claude_desktop_config.json` — same JSON as step 4 on laptop, just
+with your Cloud Run URL.
+
+Detail: [`docs/connect-your-app.md`](connect-your-app.md),
+[`docs/deploying.md`](deploying.md) §"What the gate looks like".
 
 ---
 
