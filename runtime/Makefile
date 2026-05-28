@@ -1,4 +1,4 @@
-.PHONY: all build build-go console-build console-clean test test-race lint fmt vet tidy clean install help
+.PHONY: all build build-go console-build console-clean test test-race lint lint-ci fmt vet tidy clean install help
 
 # Version metadata, baked into the binary via -ldflags.
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -67,9 +67,30 @@ test:
 test-race:
 	go test -race ./...
 
-## lint: run golangci-lint
+## lint: run golangci-lint using the host's installed version
 lint:
 	golangci-lint run
+
+# Version pinned to match .github/workflows/ci.yml. Bump both when
+# upgrading.
+GOLANGCI_LINT_VERSION ?= v2.12.2
+
+## lint-ci: run golangci-lint inside the same Docker image CI uses
+##          (golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)). Useful
+##          when the host's local install is a different version and
+##          CI fails over a rule the local doesn't know about. Avoids
+##          the "works on my laptop, fails on CI" lint trap.
+lint-ci:
+	@command -v docker >/dev/null 2>&1 || { \
+		echo "ERROR: docker is required for 'make lint-ci'. Use 'make lint' for host-installed golangci-lint instead."; \
+		exit 1; \
+	}
+	@echo "running golangci-lint $(GOLANGCI_LINT_VERSION) (same version as CI)..."
+	docker run --rm \
+		-v "$(CURDIR):/work" \
+		-w /work \
+		golangci/golangci-lint:$(GOLANGCI_LINT_VERSION) \
+		golangci-lint run --path-prefix=.
 
 ## fmt: format the codebase
 fmt:
