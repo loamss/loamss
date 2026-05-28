@@ -525,11 +525,20 @@ Realistic v0.2.0 ship: **6-8 weeks**.
 
 - **Patch releases** (`v0.1.6`, `v0.1.7` …) can ship at any point
   for small fixes that don't fit the v0.2 storyline.
-- **Pre-releases** (`v0.2.0-alpha.1`, etc.) once W2 lands — invites
-  internal testing of the cloud deploy before W3 + W4 are done.
-  `v0.2.0-alpha.2` once W4b lands (the permission preset system is
-  externally visible and worth pre-shipping for feedback).
-- **v0.2.0** when W2, W3, W4, W4b all exit. W5 is nice-to-have.
+- **`v0.2.0-alpha.1`** — ✅ shipped. Database adapter + Postgres
+  backend + profile system + cloud listener bind. Console wizard
+  is not yet gated — alpha is safe behind a VPN / Cloud Run IAM,
+  not on a public URL.
+- **`v0.2.0-alpha.2`** — pending. Setup-token wizard gate +
+  `loamss audit export --format jsonl` CLI. After this lands the
+  cloud deploy becomes safe for a public URL.
+- **`v0.2.0-alpha.3`** — pending. Dockerfile + Cloud Run + Fly
+  deploy guides (W3).
+- **`v0.2.0-beta.1`** — pending. Default-or-customize permission
+  preset system (W4b — externally visible, worth pre-shipping for
+  feedback before final v0.2.0).
+- **`v0.2.0`** — pending. Loamss Mail (W4) lands; W5 demo
+  recorded against the cloud install.
 
 This document gets updated each time a workstream lands or a
 decision changes. When v0.2.0 ships, this file is archived and a
