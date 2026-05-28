@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/loamss/loamss/runtime/internal/database"
 )
 
 // Installed is the persisted record for a capsule that has been
@@ -63,8 +61,10 @@ type Installed struct {
 // level. capsule_schema_migrations tracks this store's own
 // migration version independently from permission's.
 type Store struct {
-	db   *sql.DB
-	path string
+	db     *sql.DB
+	dbMeta *database.Database
+	ownsDB bool
+	path   string
 
 	// mu serializes writes within this process. Cross-process
 	// writes serialize via SQLite's write lock (capsules table
@@ -72,39 +72,50 @@ type Store struct {
 	mu sync.Mutex
 }
 
-// OpenStore creates or opens the capsule store at path (typically
-// <data_dir>/runtime.db). The path is shared with permission.Store;
-// the two packages own different tables and different migration
-// histories.
+// OpenStore opens the capsule store at a filesystem path. Convenience
+// wrapper around OpenStoreWith for the single-subsystem case. Callers
+// sharing one runtime.db across multiple subsystems (start.go pattern)
+// should use OpenStoreWith.
 func OpenStore(ctx context.Context, path string) (*Store, error) {
-	abs, err := filepath.Abs(path)
+	db, err := database.OpenSQLite(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("capsule: resolving path %q: %w", path, err)
+		return nil, fmt.Errorf("capsule: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return nil, fmt.Errorf("capsule: creating parent dir: %w", err)
-	}
-
-	dsn := "file:" + abs + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	db, err := sql.Open("sqlite", dsn)
+	s, err := OpenStoreWith(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("capsule: opening database: %w", err)
-	}
-	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("capsule: pinging database: %w", err)
+		return nil, err
 	}
+	s.ownsDB = true
+	return s, nil
+}
 
-	s := &Store{db: db, path: abs}
+// OpenStoreWith creates a capsule Store on top of an already-open
+// Database. Caller retains ownership of the Database; Close on the
+// returned Store will not close the database.
+func OpenStoreWith(ctx context.Context, db *database.Database) (*Store, error) {
+	if db == nil || db.DB == nil {
+		return nil, errors.New("capsule: OpenStoreWith requires a non-nil Database")
+	}
+	s := &Store{db: db.DB, dbMeta: db, path: db.DSN()}
 	if err := s.migrate(ctx); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close releases the database handle.
-func (s *Store) Close() error { return s.db.Close() }
+// Close releases the database handle if the Store opened it.
+// Stores constructed via OpenStoreWith never own the database;
+// Close is a no-op for the connection.
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.ownsDB && s.db != nil {
+		return s.db.Close()
+	}
+	return nil
+}
 
 // Path returns the on-disk database path.
 func (s *Store) Path() string { return s.path }

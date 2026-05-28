@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/loamss/loamss/runtime/internal/database"
 )
 
 // ClientCredential is one user-supplied OAuth client registration.
@@ -34,36 +34,57 @@ type ClientCredential struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// ClientStore persists per-user OAuth clients. SQLite-backed,
-// shares runtime.db with the permission / capsule / source stores.
+// ClientStore persists per-user OAuth clients. Shares runtime.db
+// with the permission / capsule / source / memory_layer stores.
 type ClientStore struct {
-	db *sql.DB
+	db     *sql.DB
+	dbMeta *database.Database
+	ownsDB bool
 
 	mu sync.Mutex
 }
 
-// OpenClientStore creates or opens the OAuth client store at the
-// given runtime.db path. Migrations are idempotent.
+// OpenClientStore opens the OAuth client store at a filesystem path.
+// Convenience wrapper around OpenClientStoreWith for the single-
+// subsystem case; callers sharing one runtime.db across multiple
+// subsystems should use OpenClientStoreWith.
 func OpenClientStore(ctx context.Context, dbPath string) (*ClientStore, error) {
-	dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := database.OpenSQLite(ctx, dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("oauth: opening client store: %w", err)
+		return nil, fmt.Errorf("oauth: %w", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
+	s, err := OpenClientStoreWith(ctx, db)
+	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("oauth: pinging client store: %w", err)
+		return nil, err
 	}
-	s := &ClientStore{db: db}
+	s.ownsDB = true
+	return s, nil
+}
+
+// OpenClientStoreWith creates an OAuth client store on top of an
+// already-open Database. The caller retains ownership.
+func OpenClientStoreWith(ctx context.Context, db *database.Database) (*ClientStore, error) {
+	if db == nil || db.DB == nil {
+		return nil, errors.New("oauth: OpenClientStoreWith requires a non-nil Database")
+	}
+	s := &ClientStore{db: db.DB, dbMeta: db}
 	if err := s.migrate(ctx); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close releases the database handle.
-func (s *ClientStore) Close() error { return s.db.Close() }
+// Close releases the database handle if this Store opened it.
+func (s *ClientStore) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.ownsDB && s.db != nil {
+		return s.db.Close()
+	}
+	return nil
+}
 
 var clientStoreMigrations = []string{
 	// 1: oauth_clients table — one row per user-registered OAuth client.

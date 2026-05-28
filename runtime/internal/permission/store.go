@@ -7,15 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	_ "modernc.org/sqlite"
+
+	"github.com/loamss/loamss/runtime/internal/database"
 )
 
 // Store is the SQLite-backed persistence for grants, the capability
@@ -27,8 +26,10 @@ import (
 // transactions are avoided; each operation is one short SQL statement
 // (or a tight transaction for multi-statement work).
 type Store struct {
-	db   *sql.DB
-	path string
+	db     *sql.DB
+	dbMeta *database.Database // nil when Open path; set when OpenWith path
+	ownsDB bool               // true when Open path opened the *sql.DB; false otherwise
+	path   string
 
 	// ulidMu protects ulidEnt. Monotonic ULID generation requires
 	// serialized access within a single millisecond.
@@ -36,42 +37,64 @@ type Store struct {
 	ulidEnt *ulid.MonotonicEntropy
 }
 
-// Open creates or opens the runtime store at path. Creates the
-// parent directory if missing. Applies schema migrations as needed.
+// Open creates or opens the runtime store at the given filesystem
+// path (SQLite). Creates the parent directory if missing. Applies
+// schema migrations as needed.
+//
+// Internally this is a convenience wrapper around OpenWith — opens
+// a fresh database.Database via database.OpenSQLite and hands it to
+// OpenWith, marking the Store as owner so Close releases the
+// handle. Callers that want to share a single Database across
+// multiple subsystem stores (the start.go pattern) should use
+// OpenWith directly.
 func Open(ctx context.Context, path string) (*Store, error) {
-	abs, err := filepath.Abs(path)
+	db, err := database.OpenSQLite(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("permission: resolving path %q: %w", path, err)
+		return nil, fmt.Errorf("permission: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return nil, fmt.Errorf("permission: creating parent dir: %w", err)
-	}
-
-	dsn := "file:" + abs + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	db, err := sql.Open("sqlite", dsn)
+	s, err := OpenWith(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("permission: opening database: %w", err)
-	}
-	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("permission: pinging database: %w", err)
+		return nil, err
 	}
+	s.ownsDB = true
+	return s, nil
+}
 
+// OpenWith creates a permission Store on top of an already-open
+// Database. The caller retains ownership of the Database; the Store
+// will not close it on Close(). Used by start.go to share one
+// runtime.db handle across permission, source, capsule, memory_layer,
+// and oauth subsystems.
+func OpenWith(ctx context.Context, db *database.Database) (*Store, error) {
+	if db == nil || db.DB == nil {
+		return nil, errors.New("permission: OpenWith requires a non-nil Database")
+	}
 	s := &Store{
-		db:      db,
-		path:    abs,
+		db:      db.DB,
+		dbMeta:  db,
+		path:    db.DSN(),
 		ulidEnt: ulid.Monotonic(rand.Reader, 0),
 	}
 	if err := s.migrate(ctx); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close releases the database handle.
+// Close releases the database handle if the Store opened it
+// (Open path). Stores constructed via OpenWith never own the
+// database and Close is a no-op for the database connection;
+// the caller is expected to close it via the database.Database
+// they passed in.
 func (s *Store) Close() error {
-	return s.db.Close()
+	if s == nil {
+		return nil
+	}
+	if s.ownsDB && s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }
 
 // Path returns the on-disk database path.
