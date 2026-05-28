@@ -213,57 +213,109 @@ to pair against it and query memory.
 
 ---
 
-### W4 — First Path A reference app (the substrate-is-worth-running proof)
+### W4 — First Path A reference app: native email on Loamss
 
-This is the highest-leverage Phase-2 ROADMAP item and the most
-important non-cloud workstream. Without a worked Path A example,
-"apps on Loamss" stays a slogan.
+**Decision: Loamss Mail** — a native email app where messages live in
+the user's Loamss. Strongest possible demo of the substrate thesis
+("switch email apps, your mail follows; uninstall the app, your mail
+stays"). Largest of the v0.2 workstreams; runs in parallel with W2/W3.
 
-**Decision needed: which app category?**
+**Decisions locked in for v0.2:**
 
-| Category   | Pros                                                                                                  | Cons                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Notes**  | Simplest data model. Wide audience. Existing exemplars (Obsidian, Bear) make the contrast obvious.    | Crowded space; differentiation has to be "your notes are portable", not features. |
-| **Journal**| Even simpler than notes. Daily entries, no folder/tag hierarchy needed at v1.                        | Smaller audience. Easier to demo, harder to build a real user base around.       |
-| **Email**  | The highest-impact category — "your email lives in your substrate" is the strongest demo there is.    | Substantially more work (MIME parsing, SMTP sending, IMAP for back-compat).      |
-| **Calendar**| Clear data model. Demoable via federation later.                                                     | Tight integration with other people's calendars makes the "your data" pitch muddier. |
+- **Domain**: `mail.loamss.com` (subdomain of the registered loamss.com).
+- **Relay provider**: **Postmark**. Best-in-class deliverability at small
+  scale (~$15/mo for 10k messages). Replaceable by SES if volume grows.
+- **Router service hosting**: **Cloud Run**. Same platform Loamss
+  itself runs on; ~$5/mo for the router service. Tiny Go service.
+- **Inbound shapes supported**: (1) fresh `<username>@mail.loamss.com`
+  address (your router operates the mapping), (2) BYO — user owns a
+  domain, configures MX to point at their own Postmark/Mailgun/SES,
+  webhook POSTs to their Loamss directly. Both go through the same
+  app on the user side; only the upstream differs.
+- **Outbound**: SMTP via Postmark in both modes, with DKIM signing
+  on `mail.loamss.com`. BYO users configure their own DKIM.
 
-**Recommendation: Notes.** Simplest end-to-end, shortest path to a
-real worked example. Saves email for v0.3+ as a much bigger second
-example. (If you want the splashier demo, Journal is even faster to
-build and produces a cleaner narrative.)
+**Sub-tasks:**
 
-**Sub-tasks (assuming Notes):**
+1. **Mail infrastructure setup.** Register `mail.loamss.com` subdomain
+   in DNS, set up Postmark account, configure SPF/DKIM/DMARC. Smoke-test
+   inbound + outbound from a curl-driven script before any app code.
+   **~1 week.** (Mostly DNS propagation waiting + Postmark verification.)
 
-1. **Capsule manifest** defining the `app.loamss-notes/note` entity
-   type — schema (`title`, `body`, `tags`, `created_at`,
-   `updated_at`), permission requests (`memory.write` + `memory.read`
-   + `memory.query` scoped to that entity type). **~2 days.**
+2. **Loamss Mail router service.** Small Go service running on Cloud Run.
+   Routes:
+     - `POST /webhooks/postmark/inbound` — Postmark POSTs inbound mail here
+     - `POST /accounts/register` — user registers a `<username>@mail.loamss.com`
+       address bound to their Loamss endpoint
+     - Internal: lookup table mapping address → Loamss URL + per-user bearer
+     - Dispatcher: forwards the MIME message to the matching Loamss via MCP
+   Postgres for the lookup table. ~500 lines of Go. **~1 week.**
 
-2. **Backend** — thin Bun/TS service that handles pairing on first
-   run, persists the bearer token + Loamss endpoint per user, and
-   proxies CRUD/query against the user's Loamss. Holds no note
-   content. **~3-4 days.**
+3. **`loamss-mail` capsule.** Defines:
+     - Entity types: `app.loamss-mail/message`, `app.loamss-mail/draft`,
+       `app.loamss-mail/thread`, `app.loamss-mail/contact`
+     - MCP tools: `mail.send`, `mail.compose`, `mail.archive`, `mail.delete`
+     - HTTP route exposed: `POST /capsule/loamss-mail/inbound` for the
+       BYO flow (when user's own relay POSTs straight into their Loamss)
+     - Memory-layer integration: JWZ threading + extracted text indexing
+     - Permission preset for the pairing flow (see W6 below)
+   Ships in `sdk/typescript/examples/loamss-mail/`. **~1 week.**
 
-3. **Frontend** — minimal but real. Note list, note editor,
-   search-as-you-type, tag pills. Aesthetic clean enough to demo.
-   **~4-5 days.**
+4. **Loamss Mail backend** — thin Bun service. Handles pairing on
+   first run, persists per-user Loamss endpoint + admin bearer, exposes
+   inbox/thread/composer APIs that proxy to the user's Loamss. Holds
+   no email content of its own. **~4-5 days.**
 
-4. **Pairing UX** — the moment of consent matters. The first-run
-   flow ("paste your Loamss URL, paste your pairing code") needs to
-   feel like a feature, not a chore. **~1-2 days.**
+5. **Loamss Mail frontend** — clean, minimal but real. Inbox list,
+   thread view, composer, search-as-you-type. Real-time inbox updates
+   via SSE subscription to the user's Loamss. **~1-2 weeks.**
 
-5. **Worked-example doc** — `docs/build-your-first-app.md` walks a
-   developer through reproducing this app. Lands once the app
-   itself is solid. **~2-3 days.**
+6. **Default/customize permission slip (runtime + console change,
+   benefits all apps).** See "W4b" below — split out because it's
+   broader than email.
 
-**Total**: ~2-3 weeks for the app + doc. Can parallelize with W2/W3.
+7. **Worked-example doc** — `docs/build-your-first-app.md`. Walks a
+   developer through reproducing Loamss Mail (or a smaller version of
+   it). Lands once the app is solid. **~3-4 days.**
 
-**Exit criterion**: the Notes app runs locally, pairs with a user's
-Loamss, creates/edits/searches notes that are persisted in the
-user's Loamss, survives `loamss source remove notes-app && loamss
-source list` (i.e. the data is in the user's substrate, not in the
-app's backend).
+**Total**: ~6-8 weeks. The longest pole in v0.2.
+
+**Exit criteria**:
+- A user can register `<chosen>@mail.loamss.com`, receive mail at that
+  address into their Loamss, read/reply/send from the app.
+- A user can configure BYO mode against `alice@her-own-domain.com` and
+  the same app works without any dependency on the project's router.
+- Uninstalling the app leaves all email intact in the user's Loamss;
+  installing a different (future) Loamss email app sees the same data.
+
+---
+
+### W4b — Default/customize permission slip (runtime + console + spec)
+
+Split out from W4 because it's a substrate-level feature, not an
+app feature. Every Path A app benefits — Loamss Mail, future Loamss
+Notes, future Loamss Calendar, etc.
+
+**Sub-tasks:**
+
+1. **Spec update.** `capsule-spec.md` (and the pairing-request
+   schema in `mcp-surface.md`) add a `permissions.presets` block:
+   apps declare one or more named permission bundles. Backward
+   compatible — apps without presets keep the flat-grant-list shape.
+   **~1 day.**
+
+2. **Runtime support.** Permission engine accepts grants requested
+   via preset id; audit records both the preset chosen and the
+   resulting grant set. **~2 days.**
+
+3. **Console UI.** Pairing screen shows preset radio buttons +
+   inline grant summary + a "Customize" expansion. ~3 days.
+
+4. **SDK helpers.** `@loamss/sdk` exposes a helper for app code to
+   construct presets ergonomically. **~1 day.**
+
+**Total**: ~1 week. Sequenced before the email app's pairing flow
+needs it; can land in parallel with W4 sub-tasks #1–#3.
 
 ---
 
@@ -290,16 +342,23 @@ both the cloud-deploy narrative and the demo at once.
 
 Drafted now so the goalposts are visible:
 
-> **v0.2.0 — single-tenant cloud deployment + first native app**
+> **v0.2.0 — cloud-deployable substrate + native email**
 >
 > Loamss now runs in the cloud. Same binary as the laptop install;
 > point it at a Postgres + an object store with `LOAMSS_PROFILE=cloud`
 > and a setup token, get a stable substrate at a public URL. Cloud
 > Run, Fly.io, and GKE deploy guides included.
 >
-> First Path A reference app shipped: a native notes app where notes
-> live in *your* Loamss, not the app's database. Uninstall the app;
-> your notes stay. Switch apps; your notes follow.
+> **Loamss Mail** ships as the first Path A reference app — a native
+> email app where messages live in *your* Loamss, not the app's
+> database. Get a fresh `<you>@mail.loamss.com` address, or use BYO
+> with your own domain. Uninstall the app; your mail stays. Switch
+> apps; your mail follows.
+>
+> The pairing flow now supports default-or-customize permission
+> presets — apps suggest sensible defaults; you accept with one
+> click or expand for fine control. Works for any Path A or Path B
+> app.
 >
 > Plus: Postgres backends for runtime + audit (audit exportable as
 > JSONL), one-time setup-token wizard gate, `--profile` flag,
@@ -310,47 +369,121 @@ Drafted now so the goalposts are visible:
 
 ---
 
+## Decisions settled
+
+| Decision                              | Outcome                                              |
+| ------------------------------------- | ---------------------------------------------------- |
+| Public the repo (W1)                  | ✅ Done. `brew install loamss` works for anyone.     |
+| W4 app category                       | **Email**. `loamss-mail` on `mail.loamss.com`.       |
+| Inbound shapes                        | Fresh `<user>@mail.loamss.com` + BYO domain          |
+| Relay provider                        | Postmark                                             |
+| Router hosting                        | Cloud Run                                            |
+| Setup-token UX                        | Paste-in-browser (magic link is v0.3 follow-up)      |
+| Container language runtimes           | BYO image (per `rfc-cloud-deployment.md`)            |
+| Permission slip                       | Default-preset-or-customize (W4b)                    |
+
+## Designing for future hosted Loamss
+
+The project has agreed to eventually offer a **hosted Loamss
+provisioning service** ("Loamss Cloud") where users who don't have a
+runtime can sign up and get one provisioned for them. **Not in v0.2
+scope**, but several W2/W3 choices should preserve the path so v0.2
+doesn't accidentally box it out. See ROADMAP Phase 2.5 for the longer
+description.
+
+Architectural alignment notes — keep these in mind during W2/W3:
+
+1. **Setup-token bypass for preconfigured deployments.** The wizard
+   gate (W2 sub-task #6) needs a `LOAMSS_PRECONFIGURED=true` mode
+   that skips the setup-token flow entirely. In hosted, the operator
+   (you) generates the admin bearer token at provisioning time and
+   delivers it to the user out-of-band (email, dashboard); the
+   wizard isn't run interactively. Implementation: when
+   preconfigured, the runtime boots straight to dashboard with an
+   admin client already paired (its credential comes from an env
+   var or a mounted secret).
+
+2. **Database provisioning patterns — both shapes supported.** A
+   hosted operator might provision either:
+   - **Database per tenant** (Postgres database per user; clean
+     isolation, ~$10/mo each at the smallest Cloud SQL tier)
+   - **Schema per tenant** (one Postgres cluster, one schema per
+     user; cheaper, more migration complexity)
+   The runtime should be agnostic — it sees a DSN, runs its
+   migrations. Test both shapes in the Postgres-adapter test suite
+   so hosted operators can pick.
+
+3. **Storage provisioning patterns — both shapes supported.**
+   - **Bucket per tenant** (cleanest walkaway story; the user owns
+     their bucket)
+   - **Prefix per tenant in a shared bucket** (cheaper)
+   `storage:gcs` already accepts bucket + prefix, so no runtime
+   change. Test both deployment shapes.
+
+4. **Subdomain routing is the control plane's job.** The runtime
+   doesn't need to know it's running at `<user>.loamss.cloud`. It
+   binds `0.0.0.0:$PORT`, serves at whatever URL is routed to it.
+   No changes needed.
+
+5. **Audit log export is critical for hosted off-boarding.** When
+   a hosted user cancels, you need to give them their data. The
+   audit log export (W2 sub-task #4, JSONL format) is part of how
+   "give the user everything we have on them" works in hosted. Keep
+   the format stable.
+
+6. **No multi-tenant retrofit.** Hosted = many single-tenant
+   instances, orchestrated by an external control plane. The
+   runtime itself stays single-tenant in v0.2 and forever. (If
+   "multi-tenant runtime" ever comes up as an alternative, push
+   back — it breaks the trust story.)
+
 ## Risks + open questions
 
-### Repo public-vs-private (W1)
+### What if W4 (email app) reveals SDK gaps?
 
-**Question**: any reason to keep `loamss/loamss` private?
+Likely outcome: writing the first real Path A app will surface
+missing primitives in the SDK (entity-type registration ergonomics,
+offline write queue, pairing-flow helpers). Treat each gap as a
+small SDK PR; don't let it derail W4. If the gaps are big,
+re-evaluate scope.
 
-I don't see one. The codebase is Apache-2.0 by intent; private was a
-release-pipeline workaround that's now causing user-facing
-breakage. If there's a reason (something in commit history, a
-private contract obligation, etc.), it should be surfaced before
-W1. If no reason, just flip it public.
+### Postmark cost at any meaningful scale
 
-### Notes vs. Journal vs. Email for W4
+$15/mo for 10k inbound/outbound is fine for early access. If hosted
+takes off, mail volume scales linearly with users; could hit
+hundreds/month quickly. Plan now for SES as the eventual production
+relay (10× cheaper at scale) but ship v0.2 on Postmark for setup
+simplicity.
 
-**Question**: which Path A app shape for the reference?
+### Abuse handling for `@mail.loamss.com` addresses
 
-Notes is the safe choice. Journal is the easiest. Email is the most
-impressive. I'd default to Notes unless you have a strong instinct
-for one of the others.
+Once you offer free addresses on your domain, people will sign up
+to spam. Mitigations needed before opening signup publicly:
+- Rate limit on registration per IP / fingerprint
+- Email verification on the registering Loamss instance (paired
+  client must demonstrate access to a real address first)
+- Abuse reporting endpoint + an off-boarding workflow that disables
+  an address without deleting the user's Loamss
+- Block known disposable-email signup patterns
 
-### Setup-token UX (W2 #6)
+None of this is needed for *closed-beta* v0.2 (you + a few friends).
+All of it is needed before opening public signup. Treat as a v0.3+
+gate on "open Loamss Mail to the public."
 
-**Question**: paste in browser, or click email-style magic link?
+### Operational reality of running a mail service
 
-Magic link is cleaner UX but requires either configuring an SMTP
-relay on the Loamss side (out of scope) or relying on the user to
-copy from the container logs. Paste-in-browser is uglier but
-self-contained.
+Even for closed beta, you'll be on the hook for:
+- DNS / DKIM key management
+- Postmark account uptime
+- Router service uptime (Cloud Run scales to zero by default — but
+  inbound mail can't wait 5s for a cold start, so `--min-instances=1`
+  is required, ~$10/mo)
+- Spam-folder placement issues from new users' addresses
 
-Recommendation: paste-in-browser for v0.2; magic link as a v0.3
-follow-up if a UX complaint emerges.
-
-### Capsule subprocess model on Cloud Run
-
-**Question**: do we ship a Dockerfile that includes Bun (the TS
-capsule runtime), or do we keep the base image minimal and document
-"extend this image to add your capsule runtimes"?
-
-Decision already made in `rfc-cloud-deployment.md`: BYO image. Base
-image is small; users who run TS capsules extend with `FROM
-ghcr.io/loamss/loamss:v0.2 ... RUN apk add bun`.
+Not insurmountable; just be honest with yourself that this changes
+the project from "ship a binary" to "ship a binary + run a small
+service." Documented under the W4 plan; revisit before opening
+public signup.
 
 ### What if W4 (Notes app) reveals SDK gaps?
 
@@ -362,27 +495,60 @@ re-evaluate scope.
 
 ---
 
+## Parallelization
+
+```
+Week 1-2:   W2 (database adapter SPI + runtime.db Postgres impl)
+            || W4-prep: register mail.loamss.com subdomain, set up
+               Postmark account, configure DNS (SPF/DKIM/DMARC),
+               smoke-test inbound + outbound via curl
+
+Week 3-4:   W2 (audit.db Postgres + setup-token gate + profile flag)
+            || W4 (router service + loamss-mail capsule manifest +
+               app backend skeleton)
+            || W4b (spec update + permission preset runtime support)
+
+Week 5:     W3 (Dockerfile, Cloud Run + Fly deploy guides)
+            || W4 (app frontend + JWZ threading + memory-layer indexing)
+            || W4b (console UI + SDK helper)
+
+Week 6:     W2/W3 first cloud deploy + smoke
+            || W4 (BYO inbound webhook + end-to-end against cloud deploy)
+            || W5 re-record demo against the cloud install
+
+Week 7-8:   End-to-end testing + release prep + v0.2.0 ship
+```
+
+Realistic v0.2.0 ship: **6-8 weeks**.
+
 ## Cadence + how this plan evolves
 
 - **Patch releases** (`v0.1.6`, `v0.1.7` …) can ship at any point
   for small fixes that don't fit the v0.2 storyline.
-- **Pre-releases** (`v0.2.0-alpha.1`, etc.) once W1 + W2 land —
-  invites internal testing of the cloud deploy before W3 + W4 are
-  done.
-- **v0.2.0** when W1, W2, W3, W4 all exit. W5 is nice-to-have.
+- **Pre-releases** (`v0.2.0-alpha.1`, etc.) once W2 lands — invites
+  internal testing of the cloud deploy before W3 + W4 are done.
+  `v0.2.0-alpha.2` once W4b lands (the permission preset system is
+  externally visible and worth pre-shipping for feedback).
+- **v0.2.0** when W2, W3, W4, W4b all exit. W5 is nice-to-have.
 
 This document gets updated each time a workstream lands or a
 decision changes. When v0.2.0 ships, this file is archived and a
-new `docs/plan-v0.3.md` takes over.
+new `docs/plan-v0.3.md` takes over — likely focused on Loamss
+Cloud (hosted provisioning, see ROADMAP Phase 2.5).
 
 ---
 
 ## What I'd do next, if asked right now
 
-1. **Decide W1** (repo public vs CDN proxy). 5 minutes.
-2. **Start W2 sub-task #1** (database adapter SPI refactor). The
-   work that unlocks everything else.
-3. **In parallel — pick W4 app category** (Notes / Journal / Email)
-   so the design work can start while W2 is in flight.
+W1 is done. Three things to start in parallel:
 
-Tell me which of those calls you want to make, and I'll proceed.
+1. **W2 sub-task #1** — database adapter SPI refactor (no behavior
+   change). The work that unlocks everything else.
+2. **W4-prep** — register `mail.loamss.com` subdomain, sign up for
+   Postmark, configure DNS. Mostly waiting for propagation; you can
+   kick this off while W2 lands and check in when it's verified.
+3. **W4b sub-task #1** — spec update for permission presets in
+   `capsule-spec.md` and `mcp-surface.md`. Small writing pass, then
+   the runtime + console implementations follow.
+
+Tell me to start and I'll begin with W2 sub-task #1.

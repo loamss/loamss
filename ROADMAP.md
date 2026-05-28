@@ -71,18 +71,46 @@ Transitional ingestors (Calendar, Drive, Slack, GitHub, Notion, Linear, …) shi
 
 **Stop and validate**: capsule developer day. Invite 30 builders. Watch where the SDK frustrates them. Ship five third-party capsules to the registry, plus at least one Path A reference app.
 
-## Phase 3 — Hosted offering and federation (weeks 25–40)
+## Phase 2.5 — Loamss Cloud: hosted personal Loamss provisioning
 
-Goal: lower the floor for non-technical users without compromising the principles.
+Goal: a user who doesn't have a Loamss can sign up on `loamss.com` and get one provisioned for them — same runtime as the self-hosted install, just operated by the project. The trust contract is unchanged (the user owns their data; they can `loamss export` and walk away).
 
-- [ ] Hosted runtime instances (the user still owns storage and keys)
-- [ ] One-click deploy from the website
-- [ ] Per-instance encrypted backups to user-chosen storage
-- [ ] Federation v0.1: invited cross-instance access (household calendars, doctor visit grants)
-- [ ] Mobile companion app (notifications, approvals, voice in/out)
-- [ ] Billing: inference passthrough plus a hosting fee
+Treated as a separate phase because it's a real operational commitment, not just code. Building it depends on Phase 2's cloud-deployable runtime as the per-tenant unit.
 
-**Stop and validate**: 1,000 hosted users using it daily. Open the canonical registry to public submissions.
+- [ ] **Control plane (Loamss Cloud)** — closed-source service that:
+    - Handles signup + auth (email/password and OAuth via Google/GitHub)
+    - Provisions per-tenant resources: Postgres (database-per-tenant or schema-per-tenant), GCS bucket (bucket-per-tenant or prefix-per-tenant), Loamss container on Cloud Run/GKE
+    - Routes `<user>.loamss.cloud` (or chosen subdomain) → the right container
+    - Manages lifecycle (start, stop, upgrade, restart)
+    - Per-tenant backups on a schedule
+    - Off-boards cancelled users with full data export
+- [ ] **Billing** — usage-based or flat-rate; Stripe integration. Pricing model TBD; tentative shape: free tier with conservative limits, paid plans for storage / mail volume / multi-instance.
+- [ ] **Admin console** (project-side) — operational view across all tenants: resource usage, errors, abuse signals, billing state.
+- [ ] **Abuse handling** for `mail.loamss.com` addresses — rate limits, verification, off-boarding endpoints.
+- [ ] **Runtime adjustments** to support hosted (most already planned in Phase 2):
+    - `LOAMSS_PRECONFIGURED=true` mode that skips the setup-token wizard (control plane delivers the admin bearer directly)
+    - Audit-log export in a stable shape (already in Phase 2 plan)
+    - Provisioning-time DB and storage shape preserved (both "fresh DB" and "schema in shared cluster" supported by the Postgres adapter; same for GCS)
+- [ ] **Compliance scaffolding** — privacy policy, terms of service, GDPR data-handling docs, breach disclosure plan, basic SOC 2 readiness work.
+
+**Operational cost shape**: ~$10-20/mo per active tenant for the substrate (container minutes + Postgres + storage); pricing has to cover that with headroom. ~1-2 hours/week of ongoing ops at small scale; grows linearly with users.
+
+**Stop and validate**: 50 paying users on Loamss Cloud, NPS > 30, churn under 5%/month, three months without a P1 incident. Only after that, open public signup beyond the wait-list.
+
+**This phase is the first time the project becomes a commercial entity in any meaningful sense.** The runtime stays open-source Apache-2.0; the control plane and its operational state are the commercial product (HashiCorp / Sentry / Plausible model). Funding question lands here: bootstrap the control plane by hand, or take small seed money to staff it properly. Out of scope for this roadmap; surfaces as a separate decision when Phase 2 is close to done.
+
+## Phase 3 — Federation + mobile (after 2.5 lands)
+
+Goal: connect runtimes to each other, and reach users where they actually are.
+
+(Hosted-runtime / billing items moved up into Phase 2.5 since they're tightly coupled to that work.)
+
+- [ ] Federation v0.1: invited cross-instance access (household calendars, doctor visit grants, the per-employee-+-team-Loamss enterprise pattern)
+- [ ] OIDC token validation as a pairing primitive (alongside the bearer-token flow), enabling "Sign in with your Loamss" UX in apps
+- [ ] Cross-instance discovery endpoint so a user's AI tool, paired with their personal Loamss, can find and federate-query team / project Loamsses they have access to
+- [ ] Mobile companion app (notifications, approvals, voice in/out, pairing via QR code)
+
+**Stop and validate**: 1,000 hosted users using it daily, with at least 100 of them using federated team/project Loamsses (the enterprise-pattern early test). Open the canonical capsule registry to public submissions.
 
 ## Phase 4 — Going wide
 
